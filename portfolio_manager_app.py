@@ -503,7 +503,7 @@ def main():
     db = st.session_state.db
     
     # Header
-    st.markdown('<p class="main-header">📊 Ashish's Trading System v1.0</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Trading System v1.0</p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
