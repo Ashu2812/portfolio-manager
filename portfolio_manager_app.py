@@ -195,159 +195,38 @@ class PortfolioDatabase:
         avg_price = holding[4]
         
         if quantity > current_qty:
-            raise ValueError(f"Cannot sell {quantity} shares. Only {current_qty} available.")
+            raise ValueError(f"Cannot sell {quantity} shares. Only {current_qty} available")
         
         profit_loss = (sell_price - avg_price) * quantity
         profit_loss_pct = ((sell_price - avg_price) / avg_price) * 100
         
-        remaining_qty = current_qty - quantity
-        if remaining_qty > 0:
-            remaining_invested = remaining_qty * avg_price
+        new_qty = current_qty - quantity
+        
+        if new_qty <= 0:
+            cursor.execute('DELETE FROM holdings WHERE symbol = ?', (symbol.upper(),))
+        else:
+            new_invested = new_qty * avg_price
             cursor.execute('''
                 UPDATE holdings
                 SET quantity = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE symbol = ?
-            ''', (remaining_qty, remaining_invested, symbol.upper()))
-        else:
-            cursor.execute('DELETE FROM holdings WHERE symbol = ?', (symbol.upper(),))
+            ''', (new_qty, new_invested, symbol.upper()))
         
-        return (symbol.upper(), holding[2], quantity, avg_price,
-                sell_price, profit_loss, profit_loss_pct)
-    
-    def bulk_import_portfolio(self, df: pd.DataFrame) -> int:
-        """Bulk import portfolio from Excel"""
-        count = 0
-        errors = []
-        
-        for idx, row in df.iterrows():
-            try:
-                # Try different column name variations
-                symbol = None
-                for col in ['Symbol', 'symbol', 'SYMBOL', 'Ticker', 'ticker', 'Stock']:
-                    if col in df.columns:
-                        symbol = str(row.get(col, '')).strip().upper()
-                        if symbol and symbol != 'NAN':
-                            break
-                
-                if not symbol:
-                    continue
-                
-                # Company name
-                company_name = None
-                for col in ['Name', 'name', 'Company', 'company', 'Stock_Name']:
-                    if col in df.columns:
-                        company_name = str(row.get(col, symbol))
-                        if company_name and company_name != 'nan':
-                            break
-                if not company_name:
-                    company_name = symbol
-                
-                # Quantity
-                quantity = 0
-                for col in ['Quantity', 'quantity', 'Qty', 'qty', 'QTY']:
-                    if col in df.columns:
-                        try:
-                            quantity = float(row.get(col, 0))
-                            if quantity > 0:
-                                break
-                        except:
-                            pass
-                
-                # Price
-                price = 0
-                for col in ['Price', 'price', 'Buy_Price', 'Buy/Sell_Price', 'Portfolio_Price', 'Entry_Price', 'Rate']:
-                    if col in df.columns:
-                        try:
-                            price = float(row.get(col, 0))
-                            if price > 0:
-                                break
-                        except:
-                            pass
-                
-                # Action
-                action = 'BUY'
-                for col in ['Action', 'action', 'Type', 'Portfolio_Action', 'Side']:
-                    if col in df.columns:
-                        action_val = str(row.get(col, 'BUY')).upper()
-                        if action_val in ['BUY', 'SELL', 'B', 'S']:
-                            action = 'BUY' if action_val in ['BUY', 'B'] else 'SELL'
-                            break
-                
-                if quantity > 0 and price > 0:
-                    # Get transaction date
-                    trans_date = date.today()
-                    for col in ['Date', 'date', 'Transaction_Date', 'Entry_Date']:
-                        if col in df.columns:
-                            try:
-                                trans_date = pd.to_datetime(row.get(col)).date()
-                                break
-                            except:
-                                pass
-                    
-                    self.add_transaction(symbol, company_name, action, quantity, price, trans_date, 
-                                       notes="Bulk imported from Excel")
-                    count += 1
-                else:
-                    errors.append(f"Row {idx+1}: {symbol} - Invalid quantity ({quantity}) or price ({price})")
-            except Exception as e:
-                errors.append(f"Row {idx+1}: {str(e)}")
-                continue
-        
-        if errors:
-            st.warning(f"⚠️ Some rows were skipped. Total imported: {count}")
-            with st.expander("View errors"):
-                for err in errors[:10]:  # Show first 10 errors
-                    st.text(err)
-        
-        return count
-    
-    def add_to_watchlist(self, symbols: List[str]):
-        """Add stocks to watchlist"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        count = 0
-        
-        for symbol in symbols:
-            try:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO watchlist (symbol, company_name)
-                    VALUES (?, ?)
-                ''', (symbol.upper(), symbol.upper()))
-                if cursor.rowcount > 0:
-                    count += 1
-            except:
-                continue
-        
-        conn.commit()
-        conn.close()
-        return count
-    
-    def get_watchlist(self) -> List[str]:
-        """Get all watchlist symbols"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT symbol FROM watchlist ORDER BY symbol')
-        symbols = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return symbols
-    
-    def clear_watchlist(self):
-        """Clear watchlist"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM watchlist')
-        conn.commit()
-        conn.close()
+        return (symbol.upper(), holding[2], quantity, avg_price, sell_price,
+                profit_loss, profit_loss_pct)
     
     def get_holdings(self) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_path)
-        df = pd.read_sql_query('SELECT * FROM holdings ORDER BY symbol', conn)
+        df = pd.read_sql_query('SELECT * FROM holdings ORDER BY updated_at DESC', conn)
         conn.close()
         return df
     
-    def get_transactions(self, limit: int = 100) -> pd.DataFrame:
+    def get_transactions(self, limit: int = 50) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_path)
-        df = pd.read_sql_query(f'SELECT * FROM transactions ORDER BY transaction_date DESC LIMIT {limit}', conn)
+        df = pd.read_sql_query(
+            f'SELECT * FROM transactions ORDER BY transaction_date DESC, created_at DESC LIMIT {limit}',
+            conn
+        )
         conn.close()
         return df
     
@@ -359,51 +238,166 @@ class PortfolioDatabase:
     
     def get_portfolio_summary(self) -> Dict:
         holdings = self.get_holdings()
-        realized_pnl = self.get_realized_pnl()
-        
-        if holdings.empty:
-            return {
-                'total_holdings': 0,
-                'total_invested': 0,
-                'total_current_value': 0,
-                'unrealized_pnl': 0,
-                'unrealized_pnl_pct': 0,
-                'realized_pnl': 0 if realized_pnl.empty else realized_pnl['profit_loss'].sum(),
-                'total_pnl': 0 if realized_pnl.empty else realized_pnl['profit_loss'].sum()
-            }
-        
-        total_invested = holdings['invested_amount'].sum()
-        current_values = []
-        
-        for _, row in holdings.iterrows():
-            try:
-                ticker = yf.Ticker(f"{row['symbol']}.NS")
-                current_price = ticker.history(period='1d')['Close'].iloc[-1]
-                current_value = current_price * row['quantity']
-                current_values.append(current_value)
-            except:
-                current_values.append(row['invested_amount'])
-        
-        total_current_value = sum(current_values)
-        unrealized_pnl = total_current_value - total_invested
-        unrealized_pnl_pct = (unrealized_pnl / total_invested * 100) if total_invested > 0 else 0
-        realized_pnl_total = 0 if realized_pnl.empty else realized_pnl['profit_loss'].sum()
         
         return {
             'total_holdings': len(holdings),
-            'total_invested': total_invested,
-            'total_current_value': total_current_value,
-            'unrealized_pnl': unrealized_pnl,
-            'unrealized_pnl_pct': unrealized_pnl_pct,
-            'realized_pnl': realized_pnl_total,
-            'total_pnl': unrealized_pnl + realized_pnl_total
+            'total_invested': holdings['invested_amount'].sum() if not holdings.empty else 0,
+            'total_quantity': holdings['quantity'].sum() if not holdings.empty else 0
         }
+    
+    def add_to_watchlist(self, symbol: str, company_name: str):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO watchlist (symbol, company_name)
+                VALUES (?, ?)
+            ''', (symbol.upper(), company_name))
+            conn.commit()
+            success = True
+        except sqlite3.IntegrityError:
+            success = False
+        finally:
+            conn.close()
+        return success
+    
+    def get_watchlist(self) -> pd.DataFrame:
+        conn = sqlite3.connect(self.db_path)
+        df = pd.read_sql_query('SELECT * FROM watchlist ORDER BY added_at DESC', conn)
+        conn.close()
+        return df
+    
+    def remove_from_watchlist(self, symbol: str):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM watchlist WHERE symbol = ?', (symbol.upper(),))
+        conn.commit()
+        conn.close()
+    
+    def bulk_import_portfolio(self, df: pd.DataFrame) -> Tuple[int, List[str]]:
+        """Bulk import portfolio from DataFrame"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        imported = 0
+        errors = []
+        
+        for idx, row in df.iterrows():
+            try:
+                symbol = str(row.get('Symbol', '')).strip().upper()
+                company = str(row.get('Company', symbol))
+                quantity = float(row.get('Quantity', 0))
+                avg_price = float(row.get('Avg Price', 0))
+                
+                if not symbol or quantity <= 0 or avg_price <= 0:
+                    errors.append(f"Row {idx+1}: Invalid data")
+                    continue
+                
+                # Check if already exists
+                cursor.execute('SELECT quantity, avg_price FROM holdings WHERE symbol = ?', (symbol,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    old_qty, old_avg = existing
+                    new_qty = old_qty + quantity
+                    new_avg = ((old_qty * old_avg) + (quantity * avg_price)) / new_qty
+                    new_invested = new_qty * new_avg
+                    
+                    cursor.execute('''
+                        UPDATE holdings
+                        SET quantity = ?, avg_price = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE symbol = ?
+                    ''', (new_qty, new_avg, new_invested, symbol))
+                else:
+                    invested = quantity * avg_price
+                    cursor.execute('''
+                        INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (symbol, company, quantity, avg_price, invested))
+                
+                imported += 1
+                
+            except Exception as e:
+                errors.append(f"Row {idx+1}: {str(e)}")
+        
+        conn.commit()
+        conn.close()
+        
+        return imported, errors
+
+
+# ==================== EXCEL PROCESSORS ====================
+
+def load_stock_list_from_excel(file) -> List[str]:
+    """Load stock symbols from Excel"""
+    try:
+        df = pd.read_excel(file)
+        
+        # Try different column names
+        symbol_col = None
+        for col in ['Symbol', 'symbol', 'SYMBOL', 'Stock', 'Ticker']:
+            if col in df.columns:
+                symbol_col = col
+                break
+        
+        if symbol_col is None:
+            # If no header, use first column
+            symbols = df.iloc[:, 0].dropna().astype(str).str.strip().str.upper().tolist()
+        else:
+            symbols = df[symbol_col].dropna().astype(str).str.strip().str.upper().tolist()
+        
+        # Clean symbols
+        symbols = [s.replace('.NS', '').replace('.BO', '') for s in symbols if s]
+        
+        return list(set(symbols))  # Remove duplicates
+    except Exception as e:
+        st.error(f"Error loading Excel: {str(e)}")
+        return []
+
+
+def load_portfolio_from_excel(file) -> pd.DataFrame:
+    """Load portfolio from Excel"""
+    try:
+        df = pd.read_excel(file)
+        
+        # Expected columns: Symbol, Company (optional), Quantity, Avg Price
+        required_cols = []
+        
+        # Map column names
+        col_map = {}
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if 'symbol' in col_lower or 'stock' in col_lower or 'ticker' in col_lower:
+                col_map[col] = 'Symbol'
+            elif 'company' in col_lower or 'name' in col_lower:
+                col_map[col] = 'Company'
+            elif 'quantity' in col_lower or 'qty' in col_lower or 'shares' in col_lower:
+                col_map[col] = 'Quantity'
+            elif 'price' in col_lower or 'avg' in col_lower or 'cost' in col_lower:
+                col_map[col] = 'Avg Price'
+        
+        df.rename(columns=col_map, inplace=True)
+        
+        # Validate required columns
+        if 'Symbol' not in df.columns or 'Quantity' not in df.columns or 'Avg Price' not in df.columns:
+            st.error("Required columns: Symbol, Quantity, Avg Price")
+            return pd.DataFrame()
+        
+        # Add Company if missing
+        if 'Company' not in df.columns:
+            df['Company'] = df['Symbol']
+        
+        return df[['Symbol', 'Company', 'Quantity', 'Avg Price']]
+        
+    except Exception as e:
+        st.error(f"Error loading portfolio: {str(e)}")
+        return pd.DataFrame()
 
 
 # ==================== STOCK ANALYZER ====================
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
-    """Analyze stock for SMA crossover and volume"""
+    """Analyze stock for SMA crossover and volume - EXACT ORIGINAL LOGIC"""
     try:
         ticker = yf.Ticker(f"{symbol}.NS")
         hist = ticker.history(period="3mo")
@@ -411,9 +405,13 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         if hist.empty or len(hist) < 30:
             return None
         
+        # Calculate SMAs
         hist['SMA9'] = hist['Close'].rolling(window=9).mean()
         hist['SMA21'] = hist['Close'].rolling(window=21).mean()
-        hist['Volume_21d_avg'] = hist['Volume'].rolling(window=21).mean()
+        
+        # Calculate volume averages (excluding current day for average calculation)
+        # Using iloc[-22:-1] to match original logic exactly
+        vol_21day_avg = hist['Volume'].iloc[-22:-1].mean() if len(hist) >= 22 else hist['Volume'].iloc[:-1].mean()
         
         latest = hist.iloc[-1]
         current_price = latest['Close']
@@ -425,7 +423,7 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         
         current_trend = 'BULLISH' if sma9 > sma21 else 'BEARISH'
         
-        # Detect crossover
+        # Detect crossover in last 5 days
         crossover_detected = False
         crossover_type = None
         crossover_day = None
@@ -434,31 +432,35 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
             prev = hist.iloc[-(i+1)]
             curr = hist.iloc[-i]
             
-            if pd.notna(prev['SMA9']) and pd.notna(prev['SMA21']):
+            if pd.notna(prev['SMA9']) and pd.notna(prev['SMA21']) and pd.notna(curr['SMA9']) and pd.notna(curr['SMA21']):
+                # Bullish crossover: SMA9 crosses above SMA21
                 if prev['SMA9'] <= prev['SMA21'] and curr['SMA9'] > curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BULLISH'
                     crossover_day = i
                     break
+                # Bearish crossover: SMA9 crosses below SMA21
                 elif prev['SMA9'] >= prev['SMA21'] and curr['SMA9'] < curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BEARISH'
                     crossover_day = i
                     break
         
-        # Volume analysis - CHECK BOTH TODAY AND YESTERDAY (Original Strategy)
-        today_volume = latest['Volume']
-        yesterday_volume = df['Volume'].iloc[-2] if len(df) >= 2 else 0
-        vol_21day_avg = latest['Volume_21d_avg']
+        # Volume analysis - EXACT ORIGINAL LOGIC
+        today_volume = hist['Volume'].iloc[-1]
+        yesterday_volume = hist['Volume'].iloc[-2] if len(hist) >= 2 else 0
         
-        # Calculate volume ratios for both days
+        # CRITICAL: Use > (strictly greater than) not >=
+        # CRITICAL: Check BOTH today AND yesterday
+        high_volume_today = today_volume > vol_21day_avg * 1.5
+        high_volume_yesterday = yesterday_volume > vol_21day_avg * 1.5
+        
+        # Qualifies if EITHER day has high volume
+        high_volume = high_volume_today or high_volume_yesterday
+        
+        # Calculate ratios for display
         volume_ratio_today = today_volume / vol_21day_avg if vol_21day_avg > 0 else 0
         volume_ratio_yesterday = yesterday_volume / vol_21day_avg if vol_21day_avg > 0 else 0
-        
-        # High volume if EITHER today OR yesterday >= 1.5x (Original Strategy)
-        high_volume_today = volume_ratio_today >= 1.5
-        high_volume_yesterday = volume_ratio_yesterday >= 1.5
-        high_volume = high_volume_today or high_volume_yesterday
         
         return {
             'symbol': symbol,
@@ -470,13 +472,15 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
             'crossover_detected': crossover_detected,
             'crossover_type': crossover_type,
             'crossover_day': crossover_day,
-            'volume_ratio': volume_ratio_today,  # Display today's ratio
-            'volume_ratio_yesterday': volume_ratio_yesterday,  # Also track yesterday
-            'high_volume': high_volume,  # TRUE if either day qualifies
+            'volume_ratio': volume_ratio_today,
+            'volume_ratio_yesterday': volume_ratio_yesterday,
+            'high_volume': high_volume,
             'high_volume_today': high_volume_today,
-            'high_volume_yesterday': high_volume_yesterday
+            'high_volume_yesterday': high_volume_yesterday,
+            'today_volume': today_volume,
+            'yesterday_volume': yesterday_volume
         }
-    except:
+    except Exception as e:
         return None
 
 
@@ -505,6 +509,18 @@ def format_currency(amount: float) -> str:
         return f"₹{amount:,.2f}"
 
 
+def format_volume(volume: float) -> str:
+    """Format volume for display"""
+    if volume >= 1e7:
+        return f"{volume/1e7:.2f}Cr"
+    elif volume >= 1e5:
+        return f"{volume/1e5:.2f}L"
+    elif volume >= 1e3:
+        return f"{volume/1e3:.2f}K"
+    else:
+        return f"{volume:.0f}"
+
+
 # ==================== MAIN APP ====================
 
 def main():
@@ -515,7 +531,7 @@ def main():
     db = st.session_state.db
     
     # Header
-    st.markdown('<p class="main-header">📊 Unified Trading System v1.0</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Trading System v2.0</p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
@@ -541,205 +557,104 @@ def main():
         with col2:
             st.metric("Invested", format_currency(summary['total_invested']))
         with col3:
-            st.metric("Current Value", format_currency(summary['total_current_value']))
+            st.metric("Total Shares", f"{summary['total_quantity']:.0f}")
         with col4:
-            st.metric("Unrealized P&L", format_currency(summary['unrealized_pnl']),
-                     f"{summary['unrealized_pnl_pct']:.2f}%")
+            realized = db.get_realized_pnl()
+            total_realized = realized['profit_loss'].sum() if not realized.empty else 0
+            st.metric("Realized P&L", format_currency(total_realized))
         
         st.divider()
         
-        col1, col2, col3 = st.columns(3)
+        # Quick stats
+        col1, col2 = st.columns(2)
+        
         with col1:
-            st.metric("💰 Realized P&L", format_currency(summary['realized_pnl']))
+            st.subheader("📊 Recent Activity")
+            recent_trans = db.get_transactions(limit=5)
+            if not recent_trans.empty:
+                for _, row in recent_trans.iterrows():
+                    trans_type = "🟢 BUY" if row['transaction_type'] == 'BUY' else "🔴 SELL"
+                    st.text(f"{trans_type} {row['symbol']} - {row['quantity']:.0f} @ ₹{row['price']:.2f}")
+            else:
+                st.info("No transactions yet")
+        
         with col2:
-            st.metric("📊 Unrealized P&L", format_currency(summary['unrealized_pnl']))
-        with col3:
-            st.metric("🎯 Total P&L", format_currency(summary['total_pnl']))
-        
-        st.divider()
-        
-        # Quick Holdings Preview
-        holdings = db.get_holdings()
-        if not holdings.empty:
-            st.subheader("Current Holdings")
-            for _, row in holdings.iterrows():
-                try:
-                    ticker = yf.Ticker(f"{row['symbol']}.NS")
-                    current_price = ticker.history(period='1d')['Close'].iloc[-1]
-                    current_value = current_price * row['quantity']
-                    pnl = current_value - row['invested_amount']
-                    pnl_pct = (pnl / row['invested_amount'] * 100)
-                    
-                    with st.expander(f"{row['symbol']} - {row['company_name']}", expanded=False):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Qty", f"{row['quantity']:.0f}")
-                            st.metric("Avg", f"₹{row['avg_price']:.2f}")
-                        with col2:
-                            st.metric("Current", f"₹{current_price:.2f}")
-                            st.metric("Invested", format_currency(row['invested_amount']))
-                        with col3:
-                            st.metric("Value", format_currency(current_value))
-                            st.metric("P&L", format_currency(pnl), f"{pnl_pct:.2f}%")
-                except:
-                    pass
-        else:
-            st.info("📤 No holdings yet. Go to 'Upload Files' to import your portfolio!")
+            st.subheader("⭐ Watchlist")
+            watchlist = db.get_watchlist()
+            if not watchlist.empty:
+                for _, row in watchlist.iterrows():
+                    st.text(f"• {row['symbol']} - {row['company_name']}")
+            else:
+                st.info("Watchlist empty")
     
     # ==================== UPLOAD FILES ====================
     elif page == "📤 Upload Files":
         st.header("Upload Excel Files")
         
-        st.markdown("""
-        <div class="upload-section">
-        <h3>📊 Quick Setup</h3>
-        <p>Upload your Excel files once and start using the system immediately!</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Upload Stock Watchlist
-        st.subheader("1️⃣ Upload Stock Watchlist")
-        st.info("📋 Upload Excel with column 'Symbol' containing stock symbols (e.g., RELIANCE, TCS, INFY)")
-        
-        watchlist_file = st.file_uploader("Choose stock watchlist Excel file", 
-                                         type=['xlsx', 'xls'], 
-                                         key="watchlist")
-        
-        if watchlist_file:
-            try:
-                df = pd.read_excel(watchlist_file)
-                st.write("Preview (first 10 rows):")
-                st.dataframe(df.head(10))
-                
-                if st.button("✅ Import Watchlist", type="primary", key="import_watch"):
-                    # Extract symbols
-                    symbols = []
-                    for col in ['Symbol', 'symbol', 'SYMBOL', 'Ticker', 'ticker', 'Stock']:
-                        if col in df.columns:
-                            symbols = df[col].dropna().astype(str).str.strip().str.upper().tolist()
-                            symbols = [s for s in symbols if s and s != 'NAN']
-                            break
+        # Stock List Upload
+        with st.expander("📋 Upload Stock List (for Scanner)", expanded=True):
+            st.info("Upload Excel with stocks to scan. Expected column: 'Symbol'")
+            stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list')
+            
+            if stock_file:
+                symbols = load_stock_list_from_excel(stock_file)
+                if symbols:
+                    st.success(f"✅ Loaded {len(symbols)} stocks successfully!")
+                    st.session_state['stock_list'] = symbols
                     
-                    if symbols:
-                        count = db.add_to_watchlist(symbols)
-                        st.success(f"✅ Added {count} stocks to watchlist!")
-                        st.balloons()
-                    else:
-                        st.error("❌ Could not find 'Symbol' column in Excel file")
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)}")
+                    with st.expander("Preview Stocks"):
+                        st.write(", ".join(symbols[:50]))
+                        if len(symbols) > 50:
+                            st.write(f"... and {len(symbols)-50} more")
         
-        # Show current watchlist
-        watchlist = db.get_watchlist()
-        if watchlist:
-            st.success(f"✅ Current watchlist: {len(watchlist)} stocks")
-            with st.expander("View watchlist"):
-                st.write(", ".join(watchlist[:50]))  # Show first 50
-                if len(watchlist) > 50:
-                    st.info(f"... and {len(watchlist) - 50} more")
-            if st.button("🗑️ Clear Watchlist", key="clear_watch"):
-                db.clear_watchlist()
-                st.success("Watchlist cleared!")
-                st.rerun()
-        
-        st.divider()
-        
-        # Upload Portfolio
-        st.subheader("2️⃣ Upload Portfolio")
-        st.info("📋 Required columns: Symbol, Quantity (or Qty), Price (or Buy_Price). Optional: Name, Action, Date")
-        
-        portfolio_file = st.file_uploader("Choose portfolio Excel file", 
-                                         type=['xlsx', 'xls'], 
-                                         key="portfolio")
-        
-        if portfolio_file:
-            try:
-                df = pd.read_excel(portfolio_file)
-                st.write("Preview (first 10 rows):")
-                st.dataframe(df.head(10))
-                
-                st.write("**Detected columns:**", ", ".join(df.columns))
-                
-                if st.button("✅ Import Portfolio", type="primary", key="import_port"):
-                    with st.spinner("Importing portfolio..."):
-                        count = db.bulk_import_portfolio(df)
-                        st.success(f"✅ Successfully imported {count} portfolio positions!")
-                        st.balloons()
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)}")
-        
-        st.divider()
-        
-        # Download templates
-        st.subheader("📥 Download Excel Templates")
-        st.info("💡 Download these templates to see the correct format")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Stock watchlist template
-            template_stocks = pd.DataFrame({
-                'Name': ['Reliance Industries', 'TCS Limited', 'Infosys'],
-                'Symbol': ['RELIANCE', 'TCS', 'INFY'],
-                'ISIN': ['INE002A01018', 'INE467B01029', 'INE009A01021']
-            })
+        # Portfolio Upload
+        with st.expander("💼 Upload Portfolio (Bulk Import)", expanded=True):
+            st.info("Upload Excel with: Symbol, Company (optional), Quantity, Avg Price")
+            portfolio_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='portfolio')
             
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                template_stocks.to_excel(writer, index=False, sheet_name='Stocks')
-            
-            st.download_button(
-                label="📥 Download Stock Template",
-                data=buffer.getvalue(),
-                file_name="stock_watchlist_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        
-        with col2:
-            # Portfolio template
-            template_portfolio = pd.DataFrame({
-                'Name': ['Reliance Industries', 'TCS Limited'],
-                'Symbol': ['RELIANCE', 'TCS'],
-                'Quantity': [100, 50],
-                'Price': [2500.00, 3000.00],
-                'Action': ['BUY', 'BUY'],
-                'Date': [date.today(), date.today()]
-            })
-            
-            buffer2 = io.BytesIO()
-            with pd.ExcelWriter(buffer2, engine='openpyxl') as writer:
-                template_portfolio.to_excel(writer, index=False, sheet_name='Portfolio')
-            
-            st.download_button(
-                label="📥 Download Portfolio Template",
-                data=buffer2.getvalue(),
-                file_name="portfolio_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            if portfolio_file:
+                df = load_portfolio_from_excel(portfolio_file)
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                    
+                    if st.button("✅ Import Portfolio", type="primary"):
+                        imported, errors = db.bulk_import_portfolio(df)
+                        
+                        if imported > 0:
+                            st.success(f"✅ Imported {imported} holdings successfully!")
+                            st.balloons()
+                        
+                        if errors:
+                            with st.expander(f"⚠️ {len(errors)} errors occurred"):
+                                for error in errors:
+                                    st.warning(error)
     
     # ==================== STOCK SCANNER ====================
     elif page == "🔍 Stock Scanner":
         st.header("Stock Market Scanner")
-        st.info("🔍 Scans for SMA 9/21 crossover within last 5 days + High volume (1.5x+ average)")
+        st.info("🎯 Scans for: SMA 9/21 crossover (last 5 days) + High Volume (>1.5x 21-day avg)")
         
-        # Option to use watchlist or manual entry
-        scan_option = st.radio("Choose scan method:", 
-                              ["📋 Use Watchlist", "✍️ Manual Entry"])
+        # Stock input options
+        input_method = st.radio("Select input method:", ["Upload Excel", "Manual Entry", "Use Uploaded List"])
         
         symbols_to_scan = []
         
-        if scan_option == "📋 Use Watchlist":
-            watchlist = db.get_watchlist()
-            if watchlist:
-                st.success(f"📊 Watchlist contains {len(watchlist)} stocks")
-                symbols_to_scan = watchlist
+        if input_method == "Upload Excel":
+            file = st.file_uploader("Upload Excel with stocks", type=['xlsx', 'xls'])
+            if file:
+                symbols_to_scan = load_stock_list_from_excel(file)
+                if symbols_to_scan:
+                    st.success(f"✅ Loaded {len(symbols_to_scan)} stocks")
+        
+        elif input_method == "Use Uploaded List":
+            if 'stock_list' in st.session_state and st.session_state['stock_list']:
+                symbols_to_scan = st.session_state['stock_list']
+                st.success(f"✅ Using {len(symbols_to_scan)} stocks from uploaded list")
             else:
-                st.warning("⚠️ Watchlist is empty. Upload stocks in 'Upload Files' or enter manually below.")
-                stock_input = st.text_area("Enter symbols (one per line)", 
-                                          "RELIANCE\nTCS\nINFY", height=150)
-                symbols_to_scan = [s.strip().upper() for s in stock_input.split('\n') if s.strip()]
-        else:
-            stock_input = st.text_area("Enter stock symbols (one per line)", 
+                st.warning("⚠️ No stock list uploaded. Go to 'Upload Files' first!")
+        
+        else:  # Manual Entry
+            stock_input = st.text_area("Enter stock symbols (one per line)",
                                       "RELIANCE\nTCS\nINFY\nHDFCBANK\nICICIBANK",
                                       height=200)
             symbols_to_scan = [s.strip().upper() for s in stock_input.split('\n') if s.strip()]
@@ -759,7 +674,9 @@ def main():
                 status_text.text(f"Analyzing {symbol}... ({i+1}/{len(symbols_to_scan)})")
                 result = analyze_stock(symbol, symbol)
                 
+                # EXACT ORIGINAL QUALIFICATION LOGIC
                 if result and result['crossover_detected'] and result['crossover_day'] <= 5:
+                    # Must have high volume (today OR yesterday)
                     if result['high_volume']:
                         if result['crossover_type'] == 'BULLISH':
                             bullish_signals.append(result)
@@ -767,7 +684,7 @@ def main():
                             bearish_signals.append(result)
                 
                 progress_bar.progress((i + 1) / len(symbols_to_scan))
-                time.sleep(0.3)
+                time.sleep(0.3)  # Rate limiting
             
             progress_bar.empty()
             status_text.empty()
@@ -787,12 +704,10 @@ def main():
                             st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
                             st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
                         
-                        # Volume display - show both days if yesterday was the trigger
-                        if sig.get('high_volume_yesterday', False) and not sig.get('high_volume_today', False):
-                            st.write(f"**Volume Today:** {sig['volume_ratio']:.2f}x average")
-                            st.write(f"**Volume Yesterday:** {sig.get('volume_ratio_yesterday', 0):.2f}x average 🔥")
-                        else:
-                            st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        # Volume info
+                        st.write(f"**📊 Volume Analysis:**")
+                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
+                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
                         
                         st.success("💡 **Recommendation:** Consider BUY with stop loss below ₹{:.2f} (SMA21)".format(sig['sma21']))
             
@@ -808,17 +723,15 @@ def main():
                             st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
                             st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
                         
-                        # Volume display - show both days if yesterday was the trigger
-                        if sig.get('high_volume_yesterday', False) and not sig.get('high_volume_today', False):
-                            st.write(f"**Volume Today:** {sig['volume_ratio']:.2f}x average")
-                            st.write(f"**Volume Yesterday:** {sig.get('volume_ratio_yesterday', 0):.2f}x average 🔥")
-                        else:
-                            st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        # Volume info
+                        st.write(f"**📊 Volume Analysis:**")
+                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
+                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
                         
                         st.error("💡 **Recommendation:** Consider SELL/SHORT with stop loss above ₹{:.2f} (SMA21)".format(sig['sma21']))
             
             if not bullish_signals and not bearish_signals:
-                st.info("ℹ️ No signals found matching criteria (crossover within 5 days + high volume 1.5x+)")
+                st.info("ℹ️ No signals found matching criteria (crossover within 5 days + high volume >1.5x)")
     
     # ==================== PORTFOLIO MANAGER ====================
     elif page == "💼 Portfolio Manager":
