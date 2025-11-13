@@ -728,7 +728,7 @@ def main():
     news_agg = st.session_state.news_aggregator
     
     # Header
-    st.markdown('<p class="main-header">📊 Unified Stock Scanner </p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Trading System v2.1</p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
@@ -953,9 +953,69 @@ def main():
     elif page == "💼 Portfolio Manager":
         st.header("Portfolio Holdings - Tile View")
         
+        # Initialize edit/delete mode in session state
+        if 'edit_mode' not in st.session_state:
+            st.session_state.edit_mode = None
+        if 'delete_mode' not in st.session_state:
+            st.session_state.delete_mode = None
+        
         holdings = db.get_holdings()
         
         if not holdings.empty:
+            # If in edit mode, show edit form at top
+            if st.session_state.edit_mode is not None:
+                edit_id = st.session_state.edit_mode
+                edit_row = holdings[holdings['id'] == edit_id].iloc[0]
+                
+                st.subheader(f"✏️ Editing: {edit_row['symbol']}")
+                
+                with st.form("edit_form", clear_on_submit=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_qty = st.number_input("Quantity", value=float(edit_row['quantity']), min_value=0.1, step=1.0, key="edit_qty")
+                    with col2:
+                        new_avg = st.number_input("Avg Price (₹)", value=float(edit_row['avg_price']), min_value=0.01, step=0.01, key="edit_avg")
+                    
+                    col_save, col_cancel = st.columns([1, 1])
+                    with col_save:
+                        save_btn = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
+                    with col_cancel:
+                        cancel_btn = st.form_submit_button("❌ Cancel", use_container_width=True)
+                    
+                    if save_btn:
+                        db.update_holding(edit_id, new_qty, new_avg)
+                        st.session_state.edit_mode = None
+                        st.success("✅ Holdings updated successfully!")
+                        st.rerun()
+                    
+                    if cancel_btn:
+                        st.session_state.edit_mode = None
+                        st.rerun()
+                
+                st.divider()
+            
+            # If in delete mode, show confirmation at top
+            if st.session_state.delete_mode is not None:
+                delete_id = st.session_state.delete_mode
+                delete_row = holdings[holdings['id'] == delete_id].iloc[0]
+                
+                st.error(f"⚠️ Delete {delete_row['symbol']} - {delete_row['company_name']}?")
+                st.warning(f"This will permanently remove {delete_row['quantity']:.0f} shares worth ₹{delete_row['invested_amount']:,.2f}")
+                
+                col_yes, col_no = st.columns([1, 1])
+                with col_yes:
+                    if st.button("✅ Yes, Delete", type="primary", use_container_width=True, key="confirm_delete"):
+                        db.delete_holding(delete_id)
+                        st.session_state.delete_mode = None
+                        st.success("✅ Holding deleted successfully!")
+                        st.rerun()
+                with col_no:
+                    if st.button("❌ No, Keep It", use_container_width=True, key="cancel_delete"):
+                        st.session_state.delete_mode = None
+                        st.rerun()
+                
+                st.divider()
+            
             # Create tiles in rows of 3
             for idx in range(0, len(holdings), 3):
                 cols = st.columns(3)
@@ -976,7 +1036,7 @@ def main():
                                 # Tile container
                                 with st.container():
                                     st.markdown(f"### {row['symbol']}")
-                                    st.caption(f"{row['company_name'][:20]}")
+                                    st.caption(f"{row['company_name'][:25]}")
                                     
                                     # Metrics in compact format
                                     st.write(f"**Qty:** {row['quantity']:.0f} | **Avg:** ₹{row['avg_price']:.2f}")
@@ -989,49 +1049,20 @@ def main():
                                     # Action buttons
                                     col_btn1, col_btn2 = st.columns(2)
                                     with col_btn1:
-                                        if st.button("✏️ Edit", key=f"edit_{row['id']}"):
-                                            st.session_state[f'edit_holding_{row["id"]}'] = True
+                                        if st.button("✏️ Edit", key=f"edit_btn_{row['id']}", use_container_width=True):
+                                            st.session_state.edit_mode = row['id']
+                                            st.session_state.delete_mode = None
+                                            st.rerun()
                                     with col_btn2:
-                                        if st.button("🗑️ Delete", key=f"del_{row['id']}"):
-                                            st.session_state[f'delete_holding_{row["id"]}'] = True
-                                    
-                                    # Edit form
-                                    if st.session_state.get(f'edit_holding_{row["id"]}', False):
-                                        with st.form(f"edit_form_{row['id']}"):
-                                            new_qty = st.number_input("Quantity", value=float(row['quantity']), min_value=0.1, step=1.0)
-                                            new_avg = st.number_input("Avg Price", value=float(row['avg_price']), min_value=0.01, step=0.01)
-                                            
-                                            col_save, col_cancel = st.columns(2)
-                                            with col_save:
-                                                if st.form_submit_button("💾 Save"):
-                                                    db.update_holding(row['id'], new_qty, new_avg)
-                                                    st.session_state[f'edit_holding_{row["id"]}'] = False
-                                                    st.success("Updated!")
-                                                    st.rerun()
-                                            with col_cancel:
-                                                if st.form_submit_button("❌ Cancel"):
-                                                    st.session_state[f'edit_holding_{row["id"]}'] = False
-                                                    st.rerun()
-                                    
-                                    # Delete confirmation
-                                    if st.session_state.get(f'delete_holding_{row["id"]}', False):
-                                        st.warning("⚠️ Confirm deletion?")
-                                        col_yes, col_no = st.columns(2)
-                                        with col_yes:
-                                            if st.button("✅ Yes", key=f"confirm_del_{row['id']}"):
-                                                db.delete_holding(row['id'])
-                                                st.session_state[f'delete_holding_{row["id"]}'] = False
-                                                st.success("Deleted!")
-                                                st.rerun()
-                                        with col_no:
-                                            if st.button("❌ No", key=f"cancel_del_{row['id']}"):
-                                                st.session_state[f'delete_holding_{row["id"]}'] = False
-                                                st.rerun()
+                                        if st.button("🗑️ Delete", key=f"del_btn_{row['id']}", use_container_width=True):
+                                            st.session_state.delete_mode = row['id']
+                                            st.session_state.edit_mode = None
+                                            st.rerun()
                                     
                                     st.divider()
                             
                             except Exception as e:
-                                st.error(f"Error loading {row['symbol']}")
+                                st.error(f"Error loading {row['symbol']}: {str(e)}")
         else:
             st.info("📤 No holdings yet. Go to 'Upload Files' to import your portfolio!")
     
@@ -1130,7 +1161,7 @@ def main():
     # Footer
     st.sidebar.divider()
     st.sidebar.info("✨ **New in v2.1:**\n- News Integration\n- Tile Portfolio\n- Edit/Delete")
-    st.sidebar.caption("Unified Stock Scanner - by Ashish Gupta")
+    st.sidebar.caption("Unified Trading System v2.1")
 
 
 if __name__ == "__main__":
