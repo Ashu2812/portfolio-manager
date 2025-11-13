@@ -446,10 +446,19 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
                     crossover_day = i
                     break
         
-        # Volume analysis
+        # Volume analysis - CHECK BOTH TODAY AND YESTERDAY (Original Strategy)
         today_volume = latest['Volume']
+        yesterday_volume = df['Volume'].iloc[-2] if len(df) >= 2 else 0
         vol_21day_avg = latest['Volume_21d_avg']
-        volume_ratio = today_volume / vol_21day_avg if vol_21day_avg > 0 else 0
+        
+        # Calculate volume ratios for both days
+        volume_ratio_today = today_volume / vol_21day_avg if vol_21day_avg > 0 else 0
+        volume_ratio_yesterday = yesterday_volume / vol_21day_avg if vol_21day_avg > 0 else 0
+        
+        # High volume if EITHER today OR yesterday >= 1.5x (Original Strategy)
+        high_volume_today = volume_ratio_today >= 1.5
+        high_volume_yesterday = volume_ratio_yesterday >= 1.5
+        high_volume = high_volume_today or high_volume_yesterday
         
         return {
             'symbol': symbol,
@@ -461,8 +470,11 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
             'crossover_detected': crossover_detected,
             'crossover_type': crossover_type,
             'crossover_day': crossover_day,
-            'volume_ratio': volume_ratio,
-            'high_volume': volume_ratio >= 1.5
+            'volume_ratio': volume_ratio_today,  # Display today's ratio
+            'volume_ratio_yesterday': volume_ratio_yesterday,  # Also track yesterday
+            'high_volume': high_volume,  # TRUE if either day qualifies
+            'high_volume_today': high_volume_today,
+            'high_volume_yesterday': high_volume_yesterday
         }
     except:
         return None
@@ -774,7 +786,14 @@ def main():
                         with col2:
                             st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
                             st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        
+                        # Volume display - show both days if yesterday was the trigger
+                        if sig.get('high_volume_yesterday', False) and not sig.get('high_volume_today', False):
+                            st.write(f"**Volume Today:** {sig['volume_ratio']:.2f}x average")
+                            st.write(f"**Volume Yesterday:** {sig.get('volume_ratio_yesterday', 0):.2f}x average 🔥")
+                        else:
+                            st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        
                         st.success("💡 **Recommendation:** Consider BUY with stop loss below ₹{:.2f} (SMA21)".format(sig['sma21']))
             
             if bearish_signals:
@@ -788,7 +807,14 @@ def main():
                         with col2:
                             st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
                             st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        
+                        # Volume display - show both days if yesterday was the trigger
+                        if sig.get('high_volume_yesterday', False) and not sig.get('high_volume_today', False):
+                            st.write(f"**Volume Today:** {sig['volume_ratio']:.2f}x average")
+                            st.write(f"**Volume Yesterday:** {sig.get('volume_ratio_yesterday', 0):.2f}x average 🔥")
+                        else:
+                            st.write(f"**Volume:** {sig['volume_ratio']:.2f}x average")
+                        
                         st.error("💡 **Recommendation:** Consider SELL/SHORT with stop loss above ₹{:.2f} (SMA21)".format(sig['sma21']))
             
             if not bullish_signals and not bearish_signals:
@@ -920,7 +946,7 @@ def main():
     # Footer
     st.sidebar.divider()
     st.sidebar.info("💡 **Tip:** Upload Excel files once and use forever!")
-    st.sidebar.caption("Unified Trading System v2.0 with Excel Upload")
+    st.sidebar.caption("Unified Trading System - By Ashish Gupta")
 
 
 if __name__ == "__main__":
