@@ -23,7 +23,44 @@ import feedparser
 from textblob import TextBlob
 import base64
 import json
+from pathlib import Path
 
+# ==================== TOKEN STORAGE FUNCTIONS ====================
+def get_token_file():
+    """Get path to token file"""
+    return Path.home() / '.portfolio_token.json'
+
+def save_token(token: str, repo: str):
+    """Save GitHub token to file"""
+    try:
+        data = {'token': token, 'repo': repo}
+        with open(get_token_file(), 'w') as f:
+            json.dump(data, f)
+        return True
+    except:
+        return False
+
+def load_token():
+    """Load saved GitHub token"""
+    try:
+        token_file = get_token_file()
+        if token_file.exists():
+            with open(token_file, 'r') as f:
+                data = json.load(f)
+                return data.get('token', ''), data.get('repo', '')
+        return '', ''
+    except:
+        return '', ''
+
+def delete_token():
+    """Delete saved token"""
+    try:
+        token_file = get_token_file()
+        if token_file.exists():
+            token_file.unlink()
+        return True
+    except:
+        return False
 # Page config
 st.set_page_config(
     page_title="Trading System v2.3",
@@ -937,6 +974,15 @@ def main():
     
     db = st.session_state.db
     news_agg = st.session_state.news_aggregator
+
+    # This is where I have changed the code as per my understanding
+    # Auto-load saved GitHub token (NEW CODE)
+    if 'token_loaded' not in st.session_state:
+        saved_token, saved_repo = load_token()
+        if saved_token:
+            db.github.set_token(saved_token)
+            db.github.set_repo(saved_repo)
+        st.session_state.token_loaded = True
     
     # Load stock list from GitHub if available
     if db.github.configured and not st.session_state.stock_list:
@@ -953,14 +999,19 @@ def main():
         github_repo = st.text_input("Repository Name", value=st.session_state.get('github_repo', ''))
         github_token = st.text_input("Access Token", value=st.session_state.get('github_token', ''), type="password")
         
-        if st.button("💾 Save Config"):
-            if github_owner and github_repo and github_token:
-                st.session_state.github_owner = github_owner
-                st.session_state.github_repo = github_repo
-                st.session_state.github_token = github_token
-                db.github.load_config()
-                st.success("✅ GitHub configured!")
-                st.rerun()
+        if st.button("💾 Connect & Save"):
+            if github_token and repo_name:
+                # Save token permanently
+                if save_token(github_token, repo_name):
+                    db.github.set_token(github_token)
+                    db.github.set_repo(repo_name)
+                    st.success("✅ Connected & Token Saved!")
+                    st.info("Token will persist - no need to re-enter!")
+                    st.rerun()
+                else:
+                    st.error("Failed to save token")
+            else:
+                st.error("Enter both token and repo name")
         
         if db.github.configured:
             st.success("✅ Connected")
@@ -972,7 +1023,17 @@ def main():
                 if st.button("⬇️ Load"):
                     db.sync_from_github()
                     st.rerun()
-    
+        
+        if db.github.configured:
+            st.success("✅ Connected")
+            if st.button("Disconnect"):
+                delete_token()
+                db.github.token = None
+                db.github.configured = False
+                if 'token_loaded' in st.session_state:
+                    del st.session_state.token_loaded
+                st.rerun()
+                
     page = st.sidebar.radio(
         "Navigation",
         ["📈 Stock Scanner", "💼 Portfolio Manager", "➕ Add Transaction",
