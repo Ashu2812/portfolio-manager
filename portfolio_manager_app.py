@@ -1,14 +1,9 @@
 """
-UNIFIED TRADING SYSTEM v2.1 - Enhanced with News Integration
-All-in-One Trading Platform with Multi-Source News & Portfolio Management
-
-NEW FEATURES:
-- Multi-source News Integration (Google News, Economic Times, BSE, Moneycontrol)
-- Tile-based Portfolio View (compact, no expansion needed)
-- Edit/Delete Holdings directly from tiles
-- Remove incorrect portfolio entries
-
-STRATEGY: 100% INTACT - SMA 9/21 Crossover + Volume (>1.5x 21-day avg)
+UNIFIED TRADING SYSTEM v2.1 FINAL - All Issues Fixed
+- NewsAPI integration restored
+- Auto-refresh prices
+- Working Edit/Delete buttons (simplified approach)
+- Strategy 100% intact
 """
 
 import streamlit as st
@@ -46,27 +41,12 @@ st.markdown("""
     .stButton>button {
         width: 100%;
     }
-    .upload-section {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-    }
     .portfolio-tile {
         background-color: #f8f9fa;
         border: 1px solid #dee2e6;
         border-radius: 8px;
         padding: 12px;
         margin: 8px 0;
-    }
-    .tile-header {
-        font-size: 14px;
-        font-weight: bold;
-        margin-bottom: 8px;
-    }
-    .tile-content {
-        font-size: 12px;
-        line-height: 1.4;
     }
     .profit {
         color: #28a745;
@@ -80,15 +60,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ==================== NEWS AGGREGATOR ====================
+# ==================== NEWS AGGREGATOR WITH NEWSAPI ====================
 
 class IndianNewsAggregator:
-    """
-    Multi-source news aggregator for Indian stocks
-    Sources: Google News, Economic Times, BSE, Moneycontrol
-    """
+    """Multi-source news aggregator including NewsAPI"""
     
-    def __init__(self):
+    def __init__(self, news_api_key="b4ced491f32745efa909fc97178bb9b1"):
+        self.news_api_key = news_api_key
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -99,10 +77,9 @@ class IndianNewsAggregator:
         """Fetch news from Google News RSS"""
         articles = []
         try:
-            # Try company name first, then symbol
             queries = [company_name, symbol]
             
-            for query in queries[:1]:  # Try first query only
+            for query in queries[:1]:
                 url = f"https://news.google.com/rss/search?q={query}+india+stock&hl=en-IN&gl=IN&ceid=IN:en"
                 feed = feedparser.parse(url)
                 
@@ -118,7 +95,6 @@ class IndianNewsAggregator:
                     except:
                         date_str = datetime.now().strftime('%Y-%m-%d')
                     
-                    # Check relevance
                     text_lower = title.lower()
                     if symbol.lower() in text_lower or any(word in text_lower for word in company_name.lower().split()[:2]):
                         articles.append({
@@ -208,38 +184,43 @@ class IndianNewsAggregator:
         
         return articles[:max_articles]
     
-    def fetch_bse_announcements(self, symbol: str) -> List[Dict]:
-        """Fetch BSE corporate announcements"""
+    def fetch_newsapi(self, symbol: str, company_name: str) -> List[Dict]:
+        """Fetch from NewsAPI"""
         articles = []
         try:
-            # For BSE, we need scrip code. This is a simplified version
-            # In production, you'd map symbols to BSE scrip codes
-            url = "https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w"
+            query = company_name if company_name != symbol else symbol
+            from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
             
-            params = {
-                'strCat': '-1',
-                'strPrevDate': (datetime.now() - timedelta(days=7)).strftime('%Y%m%d'),
-                'strScrip': '',  # Would need actual scrip code
-                'strSearch': 'S',
-                'strToDate': datetime.now().strftime('%Y%m%d'),
-                'strType': 'C'
-            }
+            url = f"https://newsapi.org/v2/everything?q={query}&from={from_date}&sortBy=publishedAt&apiKey={self.news_api_key}"
             
-            # This is a placeholder - actual implementation would need scrip mapping
-            pass
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            for article in data.get('articles', [])[:3]:
+                title = article.get('title', '')
+                if title:
+                    articles.append({
+                        'title': title[:100],
+                        'source': f"🌐 {article.get('source', {}).get('name', 'News')}",
+                        'date': article.get('publishedAt', '')[:10],
+                        'url': article.get('url', ''),
+                        'provider': 'NewsAPI'
+                    })
         except:
             pass
         
         return articles
     
     def aggregate_news(self, symbol: str, company_name: str) -> Dict:
-        """Aggregate news from all sources with sentiment"""
+        """Aggregate news from all sources including NewsAPI"""
         all_articles = []
         
         # Fetch from all sources
         all_articles.extend(self.fetch_google_news(symbol, company_name))
         all_articles.extend(self.fetch_economic_times(symbol, company_name))
         all_articles.extend(self.fetch_moneycontrol(symbol, company_name))
+        all_articles.extend(self.fetch_newsapi(symbol, company_name))
         
         # Calculate sentiment
         sentiment_score = 0
@@ -282,7 +263,6 @@ class PortfolioDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Holdings table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS holdings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,7 +276,6 @@ class PortfolioDatabase:
             )
         ''')
         
-        # Transactions table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,7 +291,6 @@ class PortfolioDatabase:
             )
         ''')
         
-        # Realized P&L table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS realized_pnl (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -325,16 +303,6 @@ class PortfolioDatabase:
                 profit_loss_pct REAL NOT NULL,
                 transaction_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Stock watchlist table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS watchlist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL UNIQUE,
-                company_name TEXT NOT NULL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -498,7 +466,6 @@ class PortfolioDatabase:
                     errors.append(f"Row {idx+1}: Invalid data")
                     continue
                 
-                # Check if already exists
                 cursor.execute('SELECT quantity, avg_price FROM holdings WHERE symbol = ?', (symbol,))
                 existing = cursor.fetchone()
                 
@@ -538,7 +505,6 @@ def load_stock_list_from_excel(file) -> List[str]:
     try:
         df = pd.read_excel(file)
         
-        # Try different column names
         symbol_col = None
         for col in ['Symbol', 'symbol', 'SYMBOL', 'Stock', 'Ticker']:
             if col in df.columns:
@@ -595,8 +561,7 @@ def load_portfolio_from_excel(file) -> pd.DataFrame:
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
     """
-    Analyze stock for SMA crossover and volume - EXACT ORIGINAL LOGIC
-    STRATEGY: NO CHANGES - Uses > operator, checks both days, excludes today from avg
+    STRATEGY UNCHANGED - EXACT ORIGINAL LOGIC
     """
     try:
         ticker = yf.Ticker(f"{symbol}.NS")
@@ -605,7 +570,6 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         if hist.empty or len(hist) < 30:
             return None
         
-        # Calculate SMAs
         hist['SMA9'] = hist['Close'].rolling(window=9).mean()
         hist['SMA21'] = hist['Close'].rolling(window=21).mean()
         
@@ -643,7 +607,7 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
                     crossover_day = i
                     break
         
-        # Volume analysis - ORIGINAL LOGIC: > operator, both days checked
+        # Volume analysis - ORIGINAL LOGIC
         today_volume = hist['Volume'].iloc[-1]
         yesterday_volume = hist['Volume'].iloc[-2] if len(hist) >= 2 else 0
         
@@ -720,7 +684,7 @@ def main():
     if 'db' not in st.session_state:
         st.session_state.db = PortfolioDatabase()
     
-    # Initialize news aggregator
+    # Initialize news aggregator with NewsAPI
     if 'news_aggregator' not in st.session_state:
         st.session_state.news_aggregator = IndianNewsAggregator()
     
@@ -728,7 +692,7 @@ def main():
     news_agg = st.session_state.news_aggregator
     
     # Header
-    st.markdown('<p class="main-header">📊 Unified Trading System v2.1</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Trading System v2.1 FINAL</p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
@@ -741,6 +705,14 @@ def main():
         "📜 Transaction History",
         "💰 Realized P&L"
     ])
+    
+    # Add auto-refresh option for portfolio
+    if page == "💼 Portfolio Manager":
+        st.sidebar.divider()
+        auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh prices", value=False)
+        if auto_refresh:
+            refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 10, 300, 60)
+            st.sidebar.caption(f"Next refresh in {refresh_interval}s")
     
     # ==================== DASHBOARD ====================
     if page == "🏠 Dashboard":
@@ -776,7 +748,7 @@ def main():
         
         with col2:
             st.subheader("ℹ️ System Info")
-            st.info("✨ **New Features**\n- News Integration\n- Tile Portfolio View\n- Edit/Delete Holdings")
+            st.info("✨ **All Features Working**\n- NewsAPI Integrated\n- Auto-refresh prices\n- Edit/Delete Fixed")
     
     # ==================== UPLOAD FILES ====================
     elif page == "📤 Upload Files":
@@ -820,7 +792,7 @@ def main():
     
     # ==================== STOCK SCANNER WITH NEWS ====================
     elif page == "🔍 Stock Scanner":
-        st.header("Stock Market Scanner with News")
+        st.header("Stock Market Scanner with News (NewsAPI Included)")
         st.info("🎯 Scans for: SMA 9/21 crossover (last 5 days) + High Volume (>1.5x 21-day avg)")
         
         input_method = st.radio("Select input method:", ["Upload Excel", "Manual Entry", "Use Uploaded List"])
@@ -865,7 +837,7 @@ def main():
                 # EXACT ORIGINAL QUALIFICATION LOGIC
                 if result and result['crossover_detected'] and result['crossover_day'] <= 5:
                     if result['high_volume']:
-                        # Fetch news for qualifying stocks
+                        # Fetch news
                         news = news_agg.aggregate_news(symbol, result['company_name'])
                         result['news'] = news
                         
@@ -875,14 +847,14 @@ def main():
                             bearish_signals.append(result)
                 
                 progress_bar.progress((i + 1) / len(symbols_to_scan))
-                time.sleep(0.5)  # Slightly slower for news fetching
+                time.sleep(0.5)
             
             progress_bar.empty()
             status_text.empty()
             
             st.success(f"✅ Scan complete! Found {len(bullish_signals)} bullish and {len(bearish_signals)} bearish signals")
             
-            # Display Bullish Signals with News
+            # Display Bullish Signals
             if bullish_signals:
                 st.subheader("🟢 Bullish Signals")
                 for sig in bullish_signals:
@@ -902,11 +874,12 @@ def main():
                         # News section
                         news = sig.get('news', {})
                         st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
+                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
                         
                         articles = news.get('articles', [])
                         if articles:
                             st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:3], 1):
+                            for idx, article in enumerate(articles[:5], 1):
                                 st.write(f"{idx}. [{article['title']}]({article['url']})")
                                 st.caption(f"   {article['source']} - {article['date']}")
                         else:
@@ -914,7 +887,7 @@ def main():
                         
                         st.success("💡 **Recommendation:** Consider BUY with stop loss below ₹{:.2f} (SMA21)".format(sig['sma21']))
             
-            # Display Bearish Signals with News
+            # Display Bearish Signals
             if bearish_signals:
                 st.subheader("🔴 Bearish Signals")
                 for sig in bearish_signals:
@@ -934,11 +907,12 @@ def main():
                         # News section
                         news = sig.get('news', {})
                         st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
+                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
                         
                         articles = news.get('articles', [])
                         if articles:
                             st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:3], 1):
+                            for idx, article in enumerate(articles[:5], 1):
                                 st.write(f"{idx}. [{article['title']}]({article['url']})")
                                 st.caption(f"   {article['source']} - {article['date']}")
                         else:
@@ -949,72 +923,61 @@ def main():
             if not bullish_signals and not bearish_signals:
                 st.info("ℹ️ No signals found matching criteria (crossover within 5 days + high volume >1.5x)")
     
-    # ==================== PORTFOLIO MANAGER - TILE VIEW ====================
+    # ==================== PORTFOLIO MANAGER WITH AUTO-REFRESH ====================
     elif page == "💼 Portfolio Manager":
-        st.header("Portfolio Holdings - Tile View")
+        st.header("Portfolio Holdings - Tile View with Auto-Refresh")
         
-        # Initialize edit/delete mode in session state
-        if 'edit_mode' not in st.session_state:
-            st.session_state.edit_mode = None
-        if 'delete_mode' not in st.session_state:
-            st.session_state.delete_mode = None
+        # Refresh button
+        col_refresh, col_clear = st.columns([1, 4])
+        with col_refresh:
+            if st.button("🔄 Refresh Now"):
+                st.rerun()
         
         holdings = db.get_holdings()
         
         if not holdings.empty:
-            # If in edit mode, show edit form at top
-            if st.session_state.edit_mode is not None:
-                edit_id = st.session_state.edit_mode
-                edit_row = holdings[holdings['id'] == edit_id].iloc[0]
+            # Sidebar for Edit/Delete operations
+            with st.sidebar:
+                st.divider()
+                st.subheader("✏️ Edit Holding")
                 
-                st.subheader(f"✏️ Editing: {edit_row['symbol']}")
+                # Select holding to edit
+                edit_options = ["-- Select --"] + [f"{row['symbol']} ({row['id']})" for _, row in holdings.iterrows()]
+                edit_selection = st.selectbox("Choose holding to edit", edit_options, key="edit_select")
                 
-                with st.form("edit_form", clear_on_submit=False):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        new_qty = st.number_input("Quantity", value=float(edit_row['quantity']), min_value=0.1, step=1.0, key="edit_qty")
-                    with col2:
-                        new_avg = st.number_input("Avg Price (₹)", value=float(edit_row['avg_price']), min_value=0.01, step=0.01, key="edit_avg")
+                if edit_selection != "-- Select --":
+                    edit_id = int(edit_selection.split('(')[1].strip(')'))
+                    edit_row = holdings[holdings['id'] == edit_id].iloc[0]
                     
-                    col_save, col_cancel = st.columns([1, 1])
-                    with col_save:
-                        save_btn = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
-                    with col_cancel:
-                        cancel_btn = st.form_submit_button("❌ Cancel", use_container_width=True)
+                    st.write(f"**Editing: {edit_row['symbol']}**")
+                    new_qty = st.number_input("New Quantity", value=float(edit_row['quantity']), min_value=0.1, step=1.0, key="edit_qty_input")
+                    new_avg = st.number_input("New Avg Price (₹)", value=float(edit_row['avg_price']), min_value=0.01, step=0.01, key="edit_avg_input")
                     
-                    if save_btn:
+                    if st.button("💾 Save Changes", type="primary", key="save_edit_btn"):
                         db.update_holding(edit_id, new_qty, new_avg)
-                        st.session_state.edit_mode = None
-                        st.success("✅ Holdings updated successfully!")
+                        st.success(f"✅ {edit_row['symbol']} updated!")
+                        time.sleep(1)
                         st.rerun()
+                
+                st.divider()
+                st.subheader("🗑️ Delete Holding")
+                
+                # Select holding to delete
+                delete_options = ["-- Select --"] + [f"{row['symbol']} ({row['id']})" for _, row in holdings.iterrows()]
+                delete_selection = st.selectbox("Choose holding to delete", delete_options, key="delete_select")
+                
+                if delete_selection != "-- Select --":
+                    delete_id = int(delete_selection.split('(')[1].strip(')'))
+                    delete_row = holdings[holdings['id'] == delete_id].iloc[0]
                     
-                    if cancel_btn:
-                        st.session_state.edit_mode = None
-                        st.rerun()
-                
-                st.divider()
-            
-            # If in delete mode, show confirmation at top
-            if st.session_state.delete_mode is not None:
-                delete_id = st.session_state.delete_mode
-                delete_row = holdings[holdings['id'] == delete_id].iloc[0]
-                
-                st.error(f"⚠️ Delete {delete_row['symbol']} - {delete_row['company_name']}?")
-                st.warning(f"This will permanently remove {delete_row['quantity']:.0f} shares worth ₹{delete_row['invested_amount']:,.2f}")
-                
-                col_yes, col_no = st.columns([1, 1])
-                with col_yes:
-                    if st.button("✅ Yes, Delete", type="primary", use_container_width=True, key="confirm_delete"):
+                    st.warning(f"⚠️ Delete {delete_row['symbol']}?")
+                    st.caption(f"{delete_row['quantity']:.0f} shares @ ₹{delete_row['avg_price']:.2f}")
+                    
+                    if st.button("✅ Yes, Delete", type="primary", key="confirm_delete_btn"):
                         db.delete_holding(delete_id)
-                        st.session_state.delete_mode = None
-                        st.success("✅ Holding deleted successfully!")
+                        st.success(f"✅ {delete_row['symbol']} deleted!")
+                        time.sleep(1)
                         st.rerun()
-                with col_no:
-                    if st.button("❌ No, Keep It", use_container_width=True, key="cancel_delete"):
-                        st.session_state.delete_mode = None
-                        st.rerun()
-                
-                st.divider()
             
             # Create tiles in rows of 3
             for idx in range(0, len(holdings), 3):
@@ -1025,7 +988,6 @@ def main():
                         row = holdings.iloc[idx + col_idx]
                         
                         with col:
-                            # Fetch current price
                             try:
                                 ticker = yf.Ticker(f"{row['symbol']}.NS")
                                 current_price = ticker.history(period='1d')['Close'].iloc[-1]
@@ -1038,31 +1000,23 @@ def main():
                                     st.markdown(f"### {row['symbol']}")
                                     st.caption(f"{row['company_name'][:25]}")
                                     
-                                    # Metrics in compact format
                                     st.write(f"**Qty:** {row['quantity']:.0f} | **Avg:** ₹{row['avg_price']:.2f}")
                                     st.write(f"**CMP:** ₹{current_price:.2f}")
                                     
-                                    # P&L with color
                                     pnl_class = "profit" if pnl >= 0 else "loss"
                                     st.markdown(f"<p class='{pnl_class}'>P&L: {format_currency(pnl)} ({pnl_pct:+.2f}%)</p>", unsafe_allow_html=True)
                                     
-                                    # Action buttons
-                                    col_btn1, col_btn2 = st.columns(2)
-                                    with col_btn1:
-                                        if st.button("✏️ Edit", key=f"edit_btn_{row['id']}", use_container_width=True):
-                                            st.session_state.edit_mode = row['id']
-                                            st.session_state.delete_mode = None
-                                            st.rerun()
-                                    with col_btn2:
-                                        if st.button("🗑️ Delete", key=f"del_btn_{row['id']}", use_container_width=True):
-                                            st.session_state.delete_mode = row['id']
-                                            st.session_state.edit_mode = None
-                                            st.rerun()
-                                    
+                                    st.caption(f"ID: {row['id']}")
                                     st.divider()
                             
                             except Exception as e:
                                 st.error(f"Error loading {row['symbol']}: {str(e)}")
+            
+            # Auto-refresh logic
+            if 'auto_refresh' in locals() and auto_refresh:
+                time.sleep(refresh_interval)
+                st.rerun()
+        
         else:
             st.info("📤 No holdings yet. Go to 'Upload Files' to import your portfolio!")
     
@@ -1160,8 +1114,8 @@ def main():
     
     # Footer
     st.sidebar.divider()
-    st.sidebar.info("✨ **New in v2.1:**\n- News Integration\n- Tile Portfolio\n- Edit/Delete")
-    st.sidebar.caption("Unified Trading System v2.1")
+    st.sidebar.info("✨ **v2.1 FINAL:**\n- NewsAPI ✅\n- Auto-refresh ✅\n- Buttons Fixed ✅")
+    st.sidebar.caption("Trading System v2.1 FINAL")
 
 
 if __name__ == "__main__":
