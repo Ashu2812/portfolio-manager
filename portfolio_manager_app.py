@@ -962,13 +962,15 @@ def main():
         st.session_state.db = PortfolioDatabase()
     
     db = st.session_state.db
-    # This is where I have changed the code as per my understanding
+    
     # Auto-load saved GitHub token (NEW CODE)
     if 'token_loaded' not in st.session_state:
         saved_token, saved_repo = load_token()
         if saved_token:
-            db.github.set_token(saved_token)
-            db.github.set_repo(saved_repo)
+            # Set attributes directly
+            db.github.token = saved_token
+            db.github.repo_name = saved_repo
+            db.github.configured = True
         st.session_state.token_loaded = True
         
     # Initialize news aggregator with NewsAPI
@@ -1003,8 +1005,8 @@ def main():
             if github_token and github_repo:
                 # Save token permanently
                 if save_token(github_token, github_repo):
-                    db.github.set_token(github_token)
-                    db.github.set_repo(github_repo)
+                    db.github.token = github_token
+                    db.github.repo= github_repo
                     st.success("✅ Connected & Token Saved!")
                     st.info("Token will persist - no need to re-enter!")
                     st.rerun()
@@ -1047,8 +1049,8 @@ def main():
             if st.button("💾 Connect & Save", type="primary", use_container_width=True):
                 if github_token and github_repo:
                     if save_token(github_token, github_repo):
-                        db.github.set_token(github_token)
-                        db.github.set_repo(github_repo)
+                        db.github.token = github_token
+                        db.github.repo = github_repo
                         st.success("✅ Connected & Saved!")
                         st.rerun()
                     else:
