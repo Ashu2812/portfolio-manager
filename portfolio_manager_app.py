@@ -756,7 +756,7 @@ def main():
         
         with st.expander("📋 Upload Stock List (for Scanner)", expanded=True):
             st.info("Upload Excel with stocks to scan. Expected column: 'Symbol'")
-            stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list')
+            stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list_uploader')
             
             if stock_file:
                 symbols = load_stock_list_from_excel(stock_file)
