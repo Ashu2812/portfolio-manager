@@ -800,13 +800,11 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
                 if prev['SMA9'] <= prev['SMA21'] and curr['SMA9'] > curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BULLISH'
-                    crossover_day = i
-                    break
-                elif prev['SMA9'] >= prev['SMA21'] and curr['SMA9'] < curr['SMA21']:
+                    crossover_day = i                    
+                if prev['SMA9'] >= prev['SMA21'] and curr['SMA9'] < curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BEARISH'
                     crossover_day = i
-                    break
         
         if crossover_detected:
             latest_sma9 = hist['SMA9'].iloc[-1]
@@ -818,7 +816,7 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
                 crossover_type = None
             
             # Validate bearish crossover is still active
-            elif crossover_type == 'BEARISH' and latest_sma9 >= latest_sma21:
+            if crossover_type == 'BEARISH' and latest_sma9 >= latest_sma21:
                 crossover_detected = False
                 crossover_type = None
             
