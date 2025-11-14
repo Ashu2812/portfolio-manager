@@ -1010,61 +1010,60 @@ def main():
     # Sidebar
     st.sidebar.title("📊 Trading System v2.3")
     
-    # GitHub Configuration
-# ==================== GITHUB STORAGE (SIDEBAR) ====================
-with st.sidebar:
-    with st.expander("💾 GitHub Storage", expanded=not db.github.configured):
-        
-        # Show current status
-        if db.github.configured:
-            st.success("✅ Connected")
-            st.caption(f"📁 Repo: {db.github.repo_name}")
+    # ==================== GITHUB STORAGE (SIDEBAR) ====================
+    with st.sidebar:
+        with st.expander("💾 GitHub Storage", expanded=not db.github.configured):
             
-            # Disconnect button
-            if st.button("🔓 Disconnect", key="disconnect_github"):
-                clear_github_token()
-                db.github.token = None
-                db.github.configured = False
-                if 'github_token_loaded' in st.session_state:
-                    del st.session_state.github_token_loaded
-                st.success("Disconnected")
-                st.rerun()
-        
-        else:
-            st.warning("⚠️ Not Connected")
+            # Show current status
+            if db.github.configured:
+                st.success("✅ Connected")
+                st.caption(f"📁 Repo: {db.github.repo_name}")
+                
+                # Disconnect button
+                if st.button("🔓 Disconnect", key="disconnect_github"):
+                    clear_github_token()
+                    db.github.token = None
+                    db.github.configured = False
+                    if 'github_token_loaded' in st.session_state:
+                        del st.session_state.github_token_loaded
+                    st.success("Disconnected")
+                    st.rerun()
             
-            # Input fields
-            github_token = st.text_input(
-                "GitHub Token",
-                type="password",
-                help="Generate at: github.com/settings/tokens"
-            )
-            
-            repo_name = st.text_input(
-                "Repository",
-                value="portfolio-data",
-                placeholder="username/repo-name"
-            )
-            
-            # Connect button
-            if st.button("💾 Connect & Save", type="primary"):
-                if github_token and repo_name:
-                    # Save token permanently
-                    if save_github_token(github_token):
-                        db.github.set_token(github_token)
-                        db.github.set_repo(repo_name)
-                        st.session_state.github_token_loaded = True
-                        st.success("✅ Connected & Saved!")
-                        st.balloons()
-                        st.rerun()
+            else:
+                st.warning("⚠️ Not Connected")
+                
+                # Input fields
+                github_token = st.text_input(
+                    "GitHub Token",
+                    type="password",
+                    help="Generate at: github.com/settings/tokens"
+                )
+                
+                repo_name = st.text_input(
+                    "Repository",
+                    value="portfolio-data",
+                    placeholder="username/repo-name"
+                )
+                
+                # Connect button
+                if st.button("💾 Connect & Save", type="primary"):
+                    if github_token and repo_name:
+                        # Save token permanently
+                        if save_github_token(github_token):
+                            db.github.set_token(github_token)
+                            db.github.set_repo(repo_name)
+                            st.session_state.github_token_loaded = True
+                            st.success("✅ Connected & Saved!")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error("Failed to save token")
                     else:
-                        st.error("Failed to save token")
-                else:
-                    st.error("Enter both token and repo name")
+                        st.error("Enter both token and repo name")
+            
+            st.divider()
+            st.caption("💡 Token saved locally - persists forever")
         
-        st.divider()
-        st.caption("💡 Token saved locally - persists forever")
-    
     # ==================== STOCK SCANNER ====================
     if page == "📈 Stock Scanner":
         st.header("Stock Scanner - SMA + Volume")
