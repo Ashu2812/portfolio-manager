@@ -981,11 +981,11 @@ def main():
     
     st.sidebar.divider()
     
-    st.markdown("<h1 class='main-header'>🚀 Unified Trading System v2.3</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>🚀 Unified Stock Scanner </h1>", unsafe_allow_html=True)
     
     # ==================== STOCK SCANNER ====================
     if page == "📈 Stock Scanner":
-        st.header("Stock Scanner - 9/21 SMA + Volume Strategy")
+        st.header("Stock Scanner - SMA + Volume")
         
         st.info("📋 Upload stock list (Excel/CSV/TXT) or load from GitHub")
         
@@ -1574,12 +1574,10 @@ def main():
     # Footer
     st.sidebar.divider()
     st.sidebar.info("""
-    ✨ **v2.3 Updates:**
+    ✨ **Stock Scanner:**
     - Strategy: 9/21 SMA ✅
     - News Integration ✅
-    - Unrealised P&L ✅
-    - CSV/XLSX/TXT Import ✅
-    - GitHub Storage ✅
+    - Volume Analysis ✅
     """)
     st.sidebar.caption("Stock Scanner - By Ashish Gupta")
 
