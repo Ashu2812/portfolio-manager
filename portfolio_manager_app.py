@@ -692,7 +692,7 @@ def main():
     news_agg = st.session_state.news_aggregator
     
     # Header
-    st.markdown('<p class="main-header">📊 Unified Trading System v2.1 FINAL</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Stock Scanner </p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
@@ -762,7 +762,7 @@ def main():
                 symbols = load_stock_list_from_excel(stock_file)
                 if symbols:
                     st.success(f"✅ Loaded {len(symbols)} stocks successfully!")
-                    st.session_state['stock_list'] = symbols
+                    st.session_state.stock_list = symbols
                     
                     with st.expander("Preview Stocks"):
                         st.write(", ".join(symbols[:50]))
@@ -807,8 +807,8 @@ def main():
                     st.success(f"✅ Loaded {len(symbols_to_scan)} stocks")
         
         elif input_method == "Use Uploaded List":
-            if 'stock_list' in st.session_state and st.session_state['stock_list']:
-                symbols_to_scan = st.session_state['stock_list']
+            if hasattr(st.session_state, 'stock_list') and st.session_state.stock_list:
+                symbols_to_scan = st.session_state.stock_list
                 st.success(f"✅ Using {len(symbols_to_scan)} stocks from uploaded list")
             else:
                 st.warning("⚠️ No stock list uploaded. Go to 'Upload Files' first!")
@@ -1115,7 +1115,7 @@ def main():
     # Footer
     st.sidebar.divider()
     st.sidebar.info("✨ **v2.1 FINAL:**\n- NewsAPI ✅\n- Auto-refresh ✅\n- Buttons Fixed ✅")
-    st.sidebar.caption("Trading System v2.1 FINAL")
+    st.sidebar.caption("Stock Scanner - By Ashish Gupta")
 
 
 if __name__ == "__main__":
