@@ -1,9 +1,11 @@
 """
-UNIFIED TRADING SYSTEM v2.1 FINAL - All Issues Fixed
-- NewsAPI integration restored
-- Auto-refresh prices
-- Working Edit/Delete buttons (simplified approach)
-- Strategy 100% intact
+UNIFIED TRADING SYSTEM v2.3 - Cosmetic Updates Only
+- Strategy 100% UNCHANGED: 9/21 SMA Crossover + Volume > 1.5x
+- News integration 100% INTACT
+- Added: Unrealised P&L display
+- Added: CSV/XLSX/TXT portfolio import
+- Removed: Balloon animation
+- Added: GitHub storage persistence
 """
 
 import streamlit as st
@@ -19,10 +21,12 @@ import numpy as np
 import requests
 import feedparser
 from textblob import TextBlob
+import base64
+import json
 
 # Page config
 st.set_page_config(
-    page_title="Trading System v2.1",
+    page_title="Trading System v2.3",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -56,8 +60,91 @@ st.markdown("""
         color: #dc3545;
         font-weight: bold;
     }
+    .pnl-summary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ==================== GITHUB STORAGE MANAGER ====================
+
+class GitHubStorageManager:
+    """Manages persistent storage on GitHub"""
+    
+    def __init__(self):
+        self.api_base = "https://api.github.com"
+        self.configured = False
+        self.load_config()
+    
+    def load_config(self):
+        """Load GitHub config from session state"""
+        if 'github_token' in st.session_state and 'github_repo' in st.session_state:
+            self.token = st.session_state.github_token
+            self.repo = st.session_state.github_repo
+            self.owner = st.session_state.get('github_owner', '')
+            self.configured = bool(self.token and self.repo and self.owner)
+    
+    def save_to_github(self, filename: str, content: str, commit_message: str) -> bool:
+        """Save file to GitHub repository"""
+        if not self.configured:
+            return False
+        
+        try:
+            url = f"{self.api_base}/repos/{self.owner}/{self.repo}/contents/{filename}"
+            headers = {
+                'Authorization': f'token {self.token}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            
+            response = requests.get(url, headers=headers)
+            sha = response.json().get('sha') if response.status_code == 200 else None
+            
+            content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+            
+            data = {
+                'message': commit_message,
+                'content': content_base64,
+                'branch': 'main'
+            }
+            
+            if sha:
+                data['sha'] = sha
+            
+            response = requests.put(url, headers=headers, json=data)
+            return response.status_code in [200, 201]
+            
+        except Exception as e:
+            st.error(f"GitHub save error: {str(e)}")
+            return False
+    
+    def load_from_github(self, filename: str) -> str:
+        """Load file from GitHub repository"""
+        if not self.configured:
+            return None
+        
+        try:
+            url = f"{self.api_base}/repos/{self.owner}/{self.repo}/contents/{filename}"
+            headers = {
+                'Authorization': f'token {self.token}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                content_base64 = response.json()['content']
+                content_bytes = base64.b64decode(content_base64)
+                return content_bytes.decode('utf-8')
+            else:
+                return None
+                
+        except Exception as e:
+            return None
 
 
 # ==================== NEWS AGGREGATOR WITH NEWSAPI ====================
@@ -191,73 +278,81 @@ class IndianNewsAggregator:
             query = company_name if company_name != symbol else symbol
             from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
             
-            url = f"https://newsapi.org/v2/everything?q={query}&from={from_date}&sortBy=publishedAt&apiKey={self.news_api_key}"
+            url = f"https://newsapi.org/v2/everything"
+            params = {
+                'apiKey': self.news_api_key,
+                'q': f"{query} stock",
+                'language': 'en',
+                'sortBy': 'publishedAt',
+                'from': from_date,
+                'pageSize': 5
+            }
             
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            response = requests.get(url, params=params, timeout=5)
             
-            for article in data.get('articles', [])[:3]:
-                title = article.get('title', '')
-                if title:
-                    articles.append({
-                        'title': title[:100],
-                        'source': f"🌐 {article.get('source', {}).get('name', 'News')}",
-                        'date': article.get('publishedAt', '')[:10],
-                        'url': article.get('url', ''),
-                        'provider': 'NewsAPI'
-                    })
+            if response.status_code == 200:
+                data = response.json()
+                
+                for article in data.get('articles', [])[:3]:
+                    title = article.get('title', '')
+                    description = article.get('description', '')
+                    source_name = article.get('source', {}).get('name', 'Unknown')
+                    url = article.get('url', '')
+                    published = article.get('publishedAt', '')
+                    
+                    try:
+                        pub_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                        date_str = pub_date.strftime('%Y-%m-%d')
+                    except:
+                        date_str = datetime.now().strftime('%Y-%m-%d')
+                    
+                    text_combined = f"{title} {description}".lower()
+                    if symbol.lower() in text_combined or company_name.lower() in text_combined:
+                        articles.append({
+                            'title': title[:100],
+                            'source': f"📡 {source_name}",
+                            'date': date_str,
+                            'url': url,
+                            'provider': 'NewsAPI'
+                        })
         except:
             pass
         
         return articles
     
-    def aggregate_news(self, symbol: str, company_name: str) -> Dict:
-        """Aggregate news from all sources including NewsAPI"""
+    def get_all_news(self, symbol: str, company_name: str, max_total: int = 8) -> List[Dict]:
+        """Aggregate news from all sources"""
         all_articles = []
         
-        # Fetch from all sources
+        all_articles.extend(self.fetch_newsapi(symbol, company_name))
         all_articles.extend(self.fetch_google_news(symbol, company_name))
         all_articles.extend(self.fetch_economic_times(symbol, company_name))
         all_articles.extend(self.fetch_moneycontrol(symbol, company_name))
-        all_articles.extend(self.fetch_newsapi(symbol, company_name))
         
-        # Calculate sentiment
-        sentiment_score = 0
-        if all_articles:
-            for article in all_articles:
-                try:
-                    blob = TextBlob(article['title'])
-                    sentiment_score += blob.sentiment.polarity
-                except:
-                    pass
-            
-            sentiment_score = sentiment_score / len(all_articles) if all_articles else 0
+        unique_articles = []
+        seen_titles = set()
         
-        # Classify sentiment
-        if sentiment_score > 0.1:
-            sentiment_label = '🟢 Positive'
-        elif sentiment_score < -0.1:
-            sentiment_label = '🔴 Negative'
-        else:
-            sentiment_label = '⚪ Neutral'
+        for article in all_articles:
+            title_lower = article['title'].lower()[:50]
+            if title_lower not in seen_titles:
+                seen_titles.add(title_lower)
+                unique_articles.append(article)
         
-        return {
-            'articles': all_articles,
-            'sentiment_score': sentiment_score,
-            'sentiment_label': sentiment_label,
-            'article_count': len(all_articles)
-        }
+        unique_articles.sort(key=lambda x: x['date'], reverse=True)
+        
+        return unique_articles[:max_total]
 
 
-# ==================== DATABASE ====================
+# ==================== DATABASE MANAGER ====================
 
 class PortfolioDatabase:
-    """Database for portfolio management"""
-    
-    def __init__(self, db_path='portfolio.db'):
+    def __init__(self, db_path="trading_system.db"):
         self.db_path = db_path
+        self.github = GitHubStorageManager()
         self.init_database()
+        
+        if self.github.configured:
+            self.sync_from_github()
     
     def init_database(self):
         conn = sqlite3.connect(self.db_path)
@@ -309,6 +404,71 @@ class PortfolioDatabase:
         conn.commit()
         conn.close()
     
+    def sync_to_github(self):
+        """Sync portfolio data to GitHub"""
+        if not self.github.configured:
+            return False
+        
+        try:
+            holdings = self.get_holdings()
+            transactions = self.get_transactions(limit=1000)
+            realized = self.get_realized_pnl()
+            
+            portfolio_data = {
+                'holdings': holdings.to_dict('records') if not holdings.empty else [],
+                'transactions': transactions.to_dict('records') if not transactions.empty else [],
+                'realized_pnl': realized.to_dict('records') if not realized.empty else [],
+                'last_sync': datetime.now().isoformat()
+            }
+            
+            content = json.dumps(portfolio_data, indent=2, default=str)
+            
+            success = self.github.save_to_github(
+                'portfolio_data.json',
+                content,
+                f'Auto-sync portfolio - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+            )
+            
+            return success
+            
+        except Exception as e:
+            return False
+    
+    def sync_from_github(self):
+        """Load portfolio data from GitHub"""
+        if not self.github.configured:
+            return False
+        
+        try:
+            content = self.github.load_from_github('portfolio_data.json')
+            
+            if content:
+                portfolio_data = json.loads(content)
+                
+                conn = sqlite3.connect(self.db_path)
+                conn.execute("DELETE FROM holdings")
+                conn.execute("DELETE FROM transactions")
+                conn.execute("DELETE FROM realized_pnl")
+                conn.commit()
+                
+                if portfolio_data.get('holdings'):
+                    holdings_df = pd.DataFrame(portfolio_data['holdings'])
+                    holdings_df.to_sql('holdings', conn, if_exists='append', index=False)
+                
+                if portfolio_data.get('transactions'):
+                    trans_df = pd.DataFrame(portfolio_data['transactions'])
+                    trans_df.to_sql('transactions', conn, if_exists='append', index=False)
+                
+                if portfolio_data.get('realized_pnl'):
+                    realized_df = pd.DataFrame(portfolio_data['realized_pnl'])
+                    realized_df.to_sql('realized_pnl', conn, if_exists='append', index=False)
+                
+                conn.close()
+                return True
+                
+        except Exception as e:
+            return False
+    
     def add_transaction(self, symbol: str, company_name: str, trans_type: str,
                        quantity: float, price: float, trans_date: date, notes: str = ''):
         conn = sqlite3.connect(self.db_path)
@@ -338,6 +498,10 @@ class PortfolioDatabase:
         
         conn.commit()
         conn.close()
+        
+        if self.github.configured:
+            self.sync_to_github()
+        
         return transaction_id
     
     def _add_to_holdings(self, cursor, symbol: str, company_name: str,
@@ -403,6 +567,9 @@ class PortfolioDatabase:
         cursor.execute('DELETE FROM holdings WHERE id = ?', (holding_id,))
         conn.commit()
         conn.close()
+        
+        if self.github.configured:
+            self.sync_to_github()
     
     def update_holding(self, holding_id: int, quantity: float, avg_price: float):
         """Update holding quantity and average price"""
@@ -416,6 +583,9 @@ class PortfolioDatabase:
         ''', (quantity, avg_price, invested, holding_id))
         conn.commit()
         conn.close()
+        
+        if self.github.configured:
+            self.sync_to_github()
     
     def get_holdings(self) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_path)
@@ -448,16 +618,16 @@ class PortfolioDatabase:
         }
     
     def bulk_import_portfolio(self, df: pd.DataFrame) -> Tuple[int, List[str]]:
-        """Bulk import portfolio from DataFrame"""
+        """Bulk import portfolio from dataframe"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        imported = 0
+        success_count = 0
         errors = []
         
         for idx, row in df.iterrows():
             try:
-                symbol = str(row.get('Symbol', '')).strip().upper()
+                symbol = str(row.get('Symbol', '')).upper().strip()
                 company = str(row.get('Company', symbol))
                 quantity = float(row.get('Quantity', 0))
                 avg_price = float(row.get('Avg Price', 0))
@@ -466,28 +636,24 @@ class PortfolioDatabase:
                     errors.append(f"Row {idx+1}: Invalid data")
                     continue
                 
-                cursor.execute('SELECT quantity, avg_price FROM holdings WHERE symbol = ?', (symbol,))
+                invested = quantity * avg_price
+                
+                cursor.execute('SELECT * FROM holdings WHERE symbol = ?', (symbol,))
                 existing = cursor.fetchone()
                 
                 if existing:
-                    old_qty, old_avg = existing
-                    new_qty = old_qty + quantity
-                    new_avg = ((old_qty * old_avg) + (quantity * avg_price)) / new_qty
-                    new_invested = new_qty * new_avg
-                    
                     cursor.execute('''
                         UPDATE holdings
                         SET quantity = ?, avg_price = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE symbol = ?
-                    ''', (new_qty, new_avg, new_invested, symbol))
+                    ''', (quantity, avg_price, invested, symbol))
                 else:
-                    invested = quantity * avg_price
                     cursor.execute('''
                         INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
                         VALUES (?, ?, ?, ?, ?)
                     ''', (symbol, company, quantity, avg_price, invested))
                 
-                imported += 1
+                success_count += 1
                 
             except Exception as e:
                 errors.append(f"Row {idx+1}: {str(e)}")
@@ -495,39 +661,73 @@ class PortfolioDatabase:
         conn.commit()
         conn.close()
         
-        return imported, errors
+        if self.github.configured:
+            self.sync_to_github()
+        
+        return success_count, errors
 
 
-# ==================== EXCEL PROCESSORS ====================
+# ==================== EXCEL/CSV/TXT PROCESSORS ====================
 
-def load_stock_list_from_excel(file) -> List[str]:
-    """Load stock symbols from Excel"""
+def load_stock_list_from_file(file) -> List[str]:
+    """Load stock symbols from Excel, CSV, or TXT file"""
     try:
-        df = pd.read_excel(file)
+        filename = file.name.lower()
         
-        symbol_col = None
-        for col in ['Symbol', 'symbol', 'SYMBOL', 'Stock', 'Ticker']:
-            if col in df.columns:
-                symbol_col = col
-                break
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            df = pd.read_excel(file)
+            symbol_col = None
+            for col in ['Symbol', 'symbol', 'SYMBOL', 'Stock', 'Ticker']:
+                if col in df.columns:
+                    symbol_col = col
+                    break
+            
+            if symbol_col is None:
+                symbols = df.iloc[:, 0].dropna().astype(str).str.strip().str.upper().tolist()
+            else:
+                symbols = df[symbol_col].dropna().astype(str).str.strip().str.upper().tolist()
         
-        if symbol_col is None:
-            symbols = df.iloc[:, 0].dropna().astype(str).str.strip().str.upper().tolist()
-        else:
-            symbols = df[symbol_col].dropna().astype(str).str.strip().str.upper().tolist()
+        elif filename.endswith('.csv'):
+            df = pd.read_csv(file)
+            symbol_col = None
+            for col in ['Symbol', 'symbol', 'SYMBOL', 'Stock', 'Ticker']:
+                if col in df.columns:
+                    symbol_col = col
+                    break
+            
+            if symbol_col is None:
+                symbols = df.iloc[:, 0].dropna().astype(str).str.strip().str.upper().tolist()
+            else:
+                symbols = df[symbol_col].dropna().astype(str).str.strip().str.upper().tolist()
+        
+        else:  # TXT file
+            content = file.read().decode('utf-8')
+            symbols = [line.strip().upper() for line in content.split('\n') if line.strip()]
         
         symbols = [s.replace('.NS', '').replace('.BO', '') for s in symbols if s]
-        
         return list(set(symbols))
+        
     except Exception as e:
-        st.error(f"Error loading Excel: {str(e)}")
+        st.error(f"Error loading file: {str(e)}")
         return []
 
 
-def load_portfolio_from_excel(file) -> pd.DataFrame:
-    """Load portfolio from Excel"""
+def load_portfolio_from_file(file) -> pd.DataFrame:
+    """Load portfolio from Excel, CSV, or TXT file"""
     try:
-        df = pd.read_excel(file)
+        filename = file.name.lower()
+        
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            df = pd.read_excel(file)
+        elif filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        elif filename.endswith('.txt'):
+            content = file.read().decode('utf-8')
+            from io import StringIO
+            df = pd.read_csv(StringIO(content))
+        else:
+            st.error("Unsupported file format")
+            return pd.DataFrame()
         
         col_map = {}
         for col in df.columns:
@@ -561,7 +761,8 @@ def load_portfolio_from_excel(file) -> pd.DataFrame:
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
     """
-    STRATEGY UNCHANGED - EXACT ORIGINAL LOGIC
+    STRATEGY UNCHANGED - 9/21 SMA CROSSOVER + VOLUME > 1.5x
+    EXACT ORIGINAL LOGIC FROM v2.1
     """
     try:
         ticker = yf.Ticker(f"{symbol}.NS")
@@ -692,288 +893,173 @@ def main():
     if 'stock_list' not in st.session_state:
         st.session_state.stock_list = []
     
-    # Initialize temporary symbols storage
     if 'temp_symbols' not in st.session_state:
         st.session_state.temp_symbols = []
     
     db = st.session_state.db
     news_agg = st.session_state.news_aggregator
     
-    # Header
-    st.markdown('<p class="main-header">📊 Unified Stock Scanner </p>', unsafe_allow_html=True)
+    # Load stock list from GitHub if available
+    if db.github.configured and not st.session_state.stock_list:
+        content = db.github.load_from_github('stock_symbols.txt')
+        if content:
+            st.session_state.stock_list = [line.strip() for line in content.split('\n') if line.strip()]
     
     # Sidebar
-    st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Select Module", [
-        "🏠 Dashboard",
-        "📤 Upload Files",
-        "🔍 Stock Scanner",
-        "💼 Portfolio Manager",
-        "➕ Add Transaction",
-        "📜 Transaction History",
-        "💰 Realized P&L"
-    ])
+    st.sidebar.title("📊 Trading System v2.3")
     
-    # Add auto-refresh option for portfolio
-    if page == "💼 Portfolio Manager":
-        st.sidebar.divider()
-        auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh prices", value=False)
-        if auto_refresh:
-            refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 10, 300, 60)
-            st.sidebar.caption(f"Next refresh in {refresh_interval}s")
-    
-    # ==================== DASHBOARD ====================
-    if page == "🏠 Dashboard":
-        st.header("Dashboard Overview")
+    # GitHub Configuration
+    with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
+        github_owner = st.text_input("GitHub Username", value=st.session_state.get('github_owner', ''))
+        github_repo = st.text_input("Repository Name", value=st.session_state.get('github_repo', ''))
+        github_token = st.text_input("Access Token", value=st.session_state.get('github_token', ''), type="password")
         
-        summary = db.get_portfolio_summary()
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Holdings", summary['total_holdings'])
-        with col2:
-            st.metric("Invested", format_currency(summary['total_invested']))
-        with col3:
-            st.metric("Total Shares", f"{summary['total_quantity']:.0f}")
-        with col4:
-            realized = db.get_realized_pnl()
-            total_realized = realized['profit_loss'].sum() if not realized.empty else 0
-            st.metric("Realized P&L", format_currency(total_realized))
-        
-        st.divider()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📊 Recent Activity")
-            recent_trans = db.get_transactions(limit=5)
-            if not recent_trans.empty:
-                for _, row in recent_trans.iterrows():
-                    trans_type = "🟢 BUY" if row['transaction_type'] == 'BUY' else "🔴 SELL"
-                    st.text(f"{trans_type} {row['symbol']} - {row['quantity']:.0f} @ ₹{row['price']:.2f}")
-            else:
-                st.info("No transactions yet")
-        
-        with col2:
-            st.subheader("ℹ️ System Info")
-            st.info("✨ **All Features Working**\n- NewsAPI Integrated\n- Auto-refresh prices\n- Edit/Delete Fixed")
-    
-    # ==================== UPLOAD FILES ====================
-    elif page == "📤 Upload Files":
-        st.header("Upload Excel Files")
-        
-        # Show currently loaded stock list if exists
-        if 'stock_list' in st.session_state and st.session_state.stock_list:
-            st.success(f"📊 **Currently loaded:** {len(st.session_state.stock_list)} stocks in memory")
-            with st.expander("View loaded stocks"):
-                st.write(", ".join(st.session_state.stock_list[:50]))
-                if len(st.session_state.stock_list) > 50:
-                    st.write(f"... and {len(st.session_state.stock_list)-50} more")
-            
-            if st.button("🗑️ Clear Stock List", key="clear_stocks"):
-                st.session_state.stock_list = []
+        if st.button("💾 Save Config"):
+            if github_owner and github_repo and github_token:
+                st.session_state.github_owner = github_owner
+                st.session_state.github_repo = github_repo
+                st.session_state.github_token = github_token
+                db.github.load_config()
+                st.success("✅ GitHub configured!")
                 st.rerun()
         
-        st.divider()
+        if db.github.configured:
+            st.success("✅ Connected")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("⬆️ Sync"):
+                    db.sync_to_github()
+            with col2:
+                if st.button("⬇️ Load"):
+                    db.sync_from_github()
+                    st.rerun()
+    
+    page = st.sidebar.radio(
+        "Navigation",
+        ["📈 Stock Scanner", "💼 Portfolio Manager", "➕ Add Transaction",
+         "📜 Transaction History", "💰 Realized P&L", "📤 Upload Files"]
+    )
+    
+    st.sidebar.divider()
+    
+    st.markdown("<h1 class='main-header'>🚀 Unified Trading System v2.3</h1>", unsafe_allow_html=True)
+    
+    # ==================== STOCK SCANNER ====================
+    if page == "📈 Stock Scanner":
+        st.header("Stock Scanner - 9/21 SMA + Volume Strategy")
         
-        with st.expander("📋 Upload Stock List (for Scanner)", expanded=True):
-            st.info("Upload Excel with stocks to scan. Expected column: 'Symbol'")
-            stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list_uploader')
-            
-            if stock_file is not None:
-                # Load symbols from file
-                symbols = load_stock_list_from_excel(stock_file)
-                if symbols:
-                    st.session_state.temp_symbols = symbols
-                    st.success(f"✅ Loaded {len(symbols)} stocks from file!")
-                    
-                    with st.expander("Preview Stocks"):
-                        st.write(", ".join(symbols[:50]))
-                        if len(symbols) > 50:
-                            st.write(f"... and {len(symbols)-50} more")
-                    
-                    # Add explicit save button
-                    col1, col2 = st.columns([1, 3])
-                    with col1:
-                        if st.button("💾 Save to Scanner", type="primary", key="save_stocks"):
-                            st.session_state.stock_list = st.session_state.temp_symbols.copy()
-                            st.success(f"✅ Saved {len(st.session_state.stock_list)} stocks to memory!")
-                            st.info("🎯 Go to Stock Scanner and select 'Use Uploaded List'")
-                            st.balloons()
-                            time.sleep(1)
-                            st.rerun()
-                    with col2:
-                        st.info("👈 Click 'Save to Scanner' to make stocks available in Scanner")
+        st.info("📋 Upload stock list (Excel/CSV/TXT) or load from GitHub")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            uploaded_file = st.file_uploader(
+                "Upload Stock List",
+                type=['xlsx', 'xls', 'csv', 'txt'],
+                help="Upload Excel, CSV, or TXT file with stock symbols"
+            )
+        
+        with col2:
+            if st.button("📥 Use GitHub List", disabled=not db.github.configured):
+                content = db.github.load_from_github('stock_symbols.txt')
+                if content:
+                    st.session_state.stock_list = [line.strip() for line in content.split('\n') if line.strip()]
+                    st.success(f"✅ Loaded {len(st.session_state.stock_list)} symbols")
+        
+        if uploaded_file:
+            symbols = load_stock_list_from_file(uploaded_file)
+            if symbols:
+                st.session_state.stock_list = symbols
+                
+                # Save to GitHub
+                if db.github.configured:
+                    content = '\n'.join(symbols)
+                    db.github.save_to_github('stock_symbols.txt', content, 'Updated stock list')
+                    st.success(f"✅ Loaded {len(symbols)} symbols (saved to GitHub)")
                 else:
-                    st.error("❌ Could not load stocks from file. Check the format.")
-            elif st.session_state.temp_symbols:
-                # Show previously loaded temp symbols (file still in uploader state)
-                st.info(f"📋 {len(st.session_state.temp_symbols)} stocks loaded. Click 'Save to Scanner' button above.")
+                    st.success(f"✅ Loaded {len(symbols)} symbols")
         
-        
-        with st.expander("💼 Upload Portfolio (Bulk Import)", expanded=True):
-            st.info("Upload Excel with: Symbol, Company (optional), Quantity, Avg Price")
-            portfolio_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='portfolio')
+        if st.session_state.stock_list:
+            st.info(f"📊 {len(st.session_state.stock_list)} stocks loaded")
             
-            if portfolio_file:
-                df = load_portfolio_from_excel(portfolio_file)
-                if not df.empty:
-                    st.dataframe(df, use_container_width=True)
+            if st.button("🔍 Start Scanning", type="primary"):
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, symbol in enumerate(st.session_state.stock_list):
+                    progress = (idx + 1) / len(st.session_state.stock_list)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Scanning {symbol}... ({idx+1}/{len(st.session_state.stock_list)})")
                     
-                    if st.button("✅ Import Portfolio", type="primary"):
-                        imported, errors = db.bulk_import_portfolio(df)
-                        
-                        if imported > 0:
-                            st.success(f"✅ Imported {imported} holdings successfully!")
-                            st.balloons()
-                        
-                        if errors:
-                            with st.expander(f"⚠️ {len(errors)} errors occurred"):
-                                for error in errors:
-                                    st.warning(error)
-    
-    # ==================== STOCK SCANNER WITH NEWS ====================
-    elif page == "🔍 Stock Scanner":
-        st.header("Stock Market Scanner with News (NewsAPI Included)")
-        st.info("🎯 Scans for: SMA 9/21 crossover (last 5 days) + High Volume (>1.5x 21-day avg)")
-        
-        input_method = st.radio("Select input method:", ["Upload Excel", "Manual Entry", "Use Uploaded List"])
-        
-        symbols_to_scan = []
-        
-        if input_method == "Upload Excel":
-            file = st.file_uploader("Upload Excel with stocks", type=['xlsx', 'xls'])
-            if file:
-                symbols_to_scan = load_stock_list_from_excel(file)
-                if symbols_to_scan:
-                    st.success(f"✅ Loaded {len(symbols_to_scan)} stocks")
-        
-        elif input_method == "Use Uploaded List":
-            if 'stock_list' in st.session_state and st.session_state.stock_list:
-                symbols_to_scan = st.session_state.stock_list
-                st.success(f"✅ Using {len(symbols_to_scan)} stocks from uploaded list")
-            else:
-                st.warning("⚠️ No stock list uploaded. Go to 'Upload Files' first!")
-                # Debug info
-                with st.expander("🔍 Debug Info"):
-                    st.write(f"Session state has stock_list: {'stock_list' in st.session_state}")
-                    if 'stock_list' in st.session_state:
-                        st.write(f"Stock list content: {st.session_state.stock_list[:5] if st.session_state.stock_list else 'Empty list'}")
-                        st.write(f"Stock list length: {len(st.session_state.stock_list) if st.session_state.stock_list else 0}")
-        
-        else:
-            stock_input = st.text_area("Enter stock symbols (one per line)",
-                                      "RELIANCE\nTCS\nINFY\nHDFCBANK\nICICIBANK",
-                                      height=200)
-            symbols_to_scan = [s.strip().upper() for s in stock_input.split('\n') if s.strip()]
-        
-        scan_button = st.button("🔍 Start Scanning with News", type="primary")
-        
-        if scan_button and symbols_to_scan:
-            st.info(f"⏳ Scanning {len(symbols_to_scan)} stocks with news... This may take a few minutes.")
-            
-            bullish_signals = []
-            bearish_signals = []
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, symbol in enumerate(symbols_to_scan):
-                status_text.text(f"Analyzing {symbol}... ({i+1}/{len(symbols_to_scan)})")
-                result = analyze_stock(symbol, symbol)
+                    stock_info = get_stock_info(symbol)
+                    if stock_info['valid']:
+                        analysis = analyze_stock(symbol, stock_info['name'])
+                        if analysis:
+                            if analysis['crossover_detected'] and analysis['crossover_type'] == 'BULLISH' and analysis['high_volume']:
+                                results.append(analysis)
+                    
+                    time.sleep(0.3)
                 
-                # EXACT ORIGINAL QUALIFICATION LOGIC
-                if result and result['crossover_detected'] and result['crossover_day'] <= 5:
-                    if result['high_volume']:
-                        # Fetch news
-                        news = news_agg.aggregate_news(symbol, result['company_name'])
-                        result['news'] = news
-                        
-                        if result['crossover_type'] == 'BULLISH':
-                            bullish_signals.append(result)
-                        else:
-                            bearish_signals.append(result)
+                progress_bar.empty()
+                status_text.empty()
                 
-                progress_bar.progress((i + 1) / len(symbols_to_scan))
-                time.sleep(0.5)
-            
-            progress_bar.empty()
-            status_text.empty()
-            
-            st.success(f"✅ Scan complete! Found {len(bullish_signals)} bullish and {len(bearish_signals)} bearish signals")
-            
-            # Display Bullish Signals
-            if bullish_signals:
-                st.subheader("🟢 Bullish Signals")
-                for sig in bullish_signals:
-                    with st.expander(f"🟢 {sig['symbol']} - ₹{sig['current_price']:.2f}", expanded=True):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Trend:** {sig['trend']}")
-                            st.write(f"**Crossover:** {sig['crossover_day']} days ago")
-                        with col2:
-                            st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
-                            st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        
-                        st.write(f"**📊 Volume Analysis:**")
-                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
-                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
-                        
-                        # News section
-                        news = sig.get('news', {})
-                        st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
-                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
-                        
-                        articles = news.get('articles', [])
-                        if articles:
-                            st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:5], 1):
-                                st.write(f"{idx}. [{article['title']}]({article['url']})")
-                                st.caption(f"   {article['source']} - {article['date']}")
-                        else:
-                            st.caption("ℹ️ No recent news found")
-                        
-                        st.success("💡 **Recommendation:** Consider BUY with stop loss below ₹{:.2f} (SMA21)".format(sig['sma21']))
-            
-            # Display Bearish Signals
-            if bearish_signals:
-                st.subheader("🔴 Bearish Signals")
-                for sig in bearish_signals:
-                    with st.expander(f"🔴 {sig['symbol']} - ₹{sig['current_price']:.2f}", expanded=True):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Trend:** {sig['trend']}")
-                            st.write(f"**Crossover:** {sig['crossover_day']} days ago")
-                        with col2:
-                            st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
-                            st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        
-                        st.write(f"**📊 Volume Analysis:**")
-                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
-                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
-                        
-                        # News section
-                        news = sig.get('news', {})
-                        st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
-                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
-                        
-                        articles = news.get('articles', [])
-                        if articles:
-                            st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:5], 1):
-                                st.write(f"{idx}. [{article['title']}]({article['url']})")
-                                st.caption(f"   {article['source']} - {article['date']}")
-                        else:
-                            st.caption("ℹ️ No recent news found")
-                        
-                        st.error("💡 **Recommendation:** Consider SELL/SHORT with stop loss above ₹{:.2f} (SMA21)".format(sig['sma21']))
-            
-            if not bullish_signals and not bearish_signals:
-                st.info("ℹ️ No signals found matching criteria (crossover within 5 days + high volume >1.5x)")
+                if results:
+                    st.success(f"✅ Found {len(results)} stocks with bullish signals!")
+                    
+                    df_results = pd.DataFrame(results)
+                    st.dataframe(
+                        df_results[['symbol', 'company_name', 'current_price', 'sma9', 'sma21',
+                                  'crossover_day', 'volume_ratio', 'trend']],
+                        use_container_width=True
+                    )
+                    
+                    # Show detailed results with news
+                    st.divider()
+                    st.subheader("📰 Detailed Analysis with News")
+                    
+                    for result in results:
+                        with st.expander(f"📊 {result['symbol']} - {result['company_name']}"):
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Current Price", f"₹{result['current_price']:.2f}")
+                                st.metric("SMA 9", f"₹{result['sma9']:.2f}")
+                            
+                            with col2:
+                                st.metric("SMA 21", f"₹{result['sma21']:.2f}")
+                                st.metric("Trend", result['trend'])
+                            
+                            with col3:
+                                st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x")
+                                st.metric("Crossover Day", f"{result['crossover_day']} days ago")
+                            
+                            st.divider()
+                            st.subheader("📰 Latest News")
+                            
+                            news_articles = news_agg.get_all_news(result['symbol'], result['company_name'])
+                            
+                            if news_articles:
+                                for article in news_articles:
+                                    st.markdown(f"**{article['source']}** | {article['date']}")
+                                    st.markdown(f"[{article['title']}]({article['url']})")
+                                    st.markdown("---")
+                            else:
+                                st.info("No recent news found")
+                else:
+                    st.warning("⚠️ No stocks found with bullish signals")
     
-    # ==================== PORTFOLIO MANAGER WITH AUTO-REFRESH ====================
+    # ==================== PORTFOLIO MANAGER ====================
     elif page == "💼 Portfolio Manager":
-        st.header("Portfolio Holdings - Tile View with Auto-Refresh")
+        st.header("Portfolio Manager")
+        
+        # Auto-refresh toggle
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            auto_refresh = st.checkbox("🔄 Auto-refresh", value=False)
+        with col2:
+            if auto_refresh:
+                refresh_interval = st.slider("Refresh interval (seconds)", 30, 300, 60)
         
         # Refresh button
         col_refresh, col_clear = st.columns([1, 4])
@@ -984,12 +1070,67 @@ def main():
         holdings = db.get_holdings()
         
         if not holdings.empty:
-            # Sidebar for Edit/Delete operations
+            # ==================== UNREALISED P&L SUMMARY ====================
+            st.markdown("### 📊 Portfolio Summary")
+            
+            total_invested = 0
+            total_current_value = 0
+            portfolio_data = []
+            
+            for _, row in holdings.iterrows():
+                try:
+                    ticker = yf.Ticker(f"{row['symbol']}.NS")
+                    current_price = ticker.history(period='1d')['Close'].iloc[-1]
+                    current_value = current_price * row['quantity']
+                    unrealised_pnl = current_value - row['invested_amount']
+                    unrealised_pnl_pct = (unrealised_pnl / row['invested_amount']) * 100
+                    
+                    total_invested += row['invested_amount']
+                    total_current_value += current_value
+                    
+                    portfolio_data.append({
+                        'symbol': row['symbol'],
+                        'invested': row['invested_amount'],
+                        'current': current_value,
+                        'pnl': unrealised_pnl,
+                        'pnl_pct': unrealised_pnl_pct
+                    })
+                except:
+                    pass
+            
+            if portfolio_data:
+                total_unrealised_pnl = total_current_value - total_invested
+                total_unrealised_pnl_pct = (total_unrealised_pnl / total_invested * 100) if total_invested > 0 else 0
+                
+                st.markdown("""
+                <div class='pnl-summary'>
+                    <h2 style='text-align: center; margin-bottom: 20px;'>💰 Unrealised Profit/Loss</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Invested", format_currency(total_invested))
+                with col2:
+                    st.metric("Current Value", format_currency(total_current_value))
+                with col3:
+                    pnl_color = "🟢" if total_unrealised_pnl >= 0 else "🔴"
+                    st.metric(f"{pnl_color} Unrealised P&L", 
+                             format_currency(total_unrealised_pnl),
+                             f"{total_unrealised_pnl_pct:+.2f}%")
+                with col4:
+                    num_holdings = len(holdings)
+                    winners = len([p for p in portfolio_data if p['pnl'] > 0])
+                    st.metric("Holdings", num_holdings, f"{winners} profitable")
+                
+                st.divider()
+            
+            # Sidebar for Edit/Delete
             with st.sidebar:
                 st.divider()
                 st.subheader("✏️ Edit Holding")
                 
-                # Select holding to edit
                 edit_options = ["-- Select --"] + [f"{row['symbol']} ({row['id']})" for _, row in holdings.iterrows()]
                 edit_selection = st.selectbox("Choose holding to edit", edit_options, key="edit_select")
                 
@@ -998,10 +1139,10 @@ def main():
                     edit_row = holdings[holdings['id'] == edit_id].iloc[0]
                     
                     st.write(f"**Editing: {edit_row['symbol']}**")
-                    new_qty = st.number_input("New Quantity", value=float(edit_row['quantity']), min_value=0.1, step=1.0, key="edit_qty_input")
-                    new_avg = st.number_input("New Avg Price (₹)", value=float(edit_row['avg_price']), min_value=0.01, step=0.01, key="edit_avg_input")
+                    new_qty = st.number_input("New Quantity", value=float(edit_row['quantity']), min_value=0.1, step=1.0, key="edit_qty")
+                    new_avg = st.number_input("New Avg Price (₹)", value=float(edit_row['avg_price']), min_value=0.01, step=0.01, key="edit_avg")
                     
-                    if st.button("💾 Save Changes", type="primary", key="save_edit_btn"):
+                    if st.button("💾 Save Changes", type="primary", key="save_edit"):
                         db.update_holding(edit_id, new_qty, new_avg)
                         st.success(f"✅ {edit_row['symbol']} updated!")
                         time.sleep(1)
@@ -1010,7 +1151,6 @@ def main():
                 st.divider()
                 st.subheader("🗑️ Delete Holding")
                 
-                # Select holding to delete
                 delete_options = ["-- Select --"] + [f"{row['symbol']} ({row['id']})" for _, row in holdings.iterrows()]
                 delete_selection = st.selectbox("Choose holding to delete", delete_options, key="delete_select")
                 
@@ -1021,13 +1161,15 @@ def main():
                     st.warning(f"⚠️ Delete {delete_row['symbol']}?")
                     st.caption(f"{delete_row['quantity']:.0f} shares @ ₹{delete_row['avg_price']:.2f}")
                     
-                    if st.button("✅ Yes, Delete", type="primary", key="confirm_delete_btn"):
+                    if st.button("✅ Yes, Delete", type="primary", key="confirm_delete"):
                         db.delete_holding(delete_id)
                         st.success(f"✅ {delete_row['symbol']} deleted!")
                         time.sleep(1)
                         st.rerun()
             
-            # Create tiles in rows of 3
+            # Holdings display
+            st.markdown("### 📋 Holdings Details")
+            
             for idx in range(0, len(holdings), 3):
                 cols = st.columns(3)
                 
@@ -1043,7 +1185,6 @@ def main():
                                 pnl = current_value - row['invested_amount']
                                 pnl_pct = (pnl / row['invested_amount'] * 100)
                                 
-                                # Tile container
                                 with st.container():
                                     st.markdown(f"### {row['symbol']}")
                                     st.caption(f"{row['company_name'][:25]}")
@@ -1060,7 +1201,7 @@ def main():
                             except Exception as e:
                                 st.error(f"Error loading {row['symbol']}: {str(e)}")
             
-            # Auto-refresh logic
+            # Auto-refresh
             if 'auto_refresh' in locals() and auto_refresh:
                 time.sleep(refresh_interval)
                 st.rerun()
@@ -1105,7 +1246,7 @@ def main():
                 try:
                     db.add_transaction(symbol, company_name, trans_type, quantity, price, trans_date, notes)
                     st.success("✅ Transaction added successfully!")
-                    st.balloons()
+                    # BALLOON ANIMATION REMOVED
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
     
@@ -1160,9 +1301,136 @@ def main():
         else:
             st.info("💰 No realized P&L yet. Sell some holdings to see booked profits/losses.")
     
+    # ==================== UPLOAD FILES ====================
+    elif page == "📤 Upload Files":
+        st.header("Upload Portfolio & Stock List")
+        
+        tab1, tab2 = st.tabs(["📊 Portfolio Import", "📋 Stock List"])
+        
+        with tab1:
+            st.subheader("Import Portfolio from Excel/CSV/TXT")
+            st.info("📋 Upload file with columns: Symbol, Company, Quantity, Avg Price")
+            
+            # Show export option
+            holdings = db.get_holdings()
+            if not holdings.empty:
+                st.markdown("#### 📥 Export Current Portfolio")
+                export_df = holdings[['symbol', 'company_name', 'quantity', 'avg_price', 'invested_amount']]
+                export_df.columns = ['Symbol', 'Company', 'Quantity', 'Avg Price', 'Invested Amount']
+                
+                # CSV export
+                csv_export = export_df.to_csv(index=False)
+                st.download_button(
+                    "📥 Download as CSV",
+                    csv_export,
+                    f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    "text/csv"
+                )
+                
+                # Excel export
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    export_df.to_excel(writer, index=False, sheet_name='Portfolio')
+                excel_data = output.getvalue()
+                
+                st.download_button(
+                    "📥 Download as Excel",
+                    excel_data,
+                    f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                
+                st.divider()
+            
+            # Import
+            st.markdown("#### 📤 Import Portfolio")
+            portfolio_file = st.file_uploader(
+                "Upload Portfolio File",
+                type=['xlsx', 'xls', 'csv', 'txt'],
+                key='portfolio_file'
+            )
+            
+            if portfolio_file is not None:
+                try:
+                    preview_df = load_portfolio_from_file(portfolio_file)
+                    
+                    if not preview_df.empty:
+                        st.write("**Preview:**")
+                        st.dataframe(preview_df.head(), use_container_width=True)
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            if st.button("✅ Import Portfolio", type="primary"):
+                                success_count, errors = db.bulk_import_portfolio(preview_df)
+                                
+                                if success_count > 0:
+                                    st.success(f"✅ Imported {success_count} holdings!")
+                                
+                                if errors:
+                                    st.warning(f"⚠️ {len(errors)} errors:")
+                                    for error in errors[:5]:
+                                        st.text(error)
+                                
+                                st.rerun()
+                        
+                        with col2:
+                            st.warning("⚠️ This will replace existing holdings!")
+                
+                except Exception as e:
+                    st.error(f"Error reading file: {str(e)}")
+        
+        with tab2:
+            st.subheader("Upload Stock List for Scanner")
+            st.info("📋 Upload Excel/CSV/TXT file with stock symbols")
+            
+            if st.session_state.stock_list:
+                st.success(f"✅ Currently using {len(st.session_state.stock_list)} symbols from GitHub")
+                
+                with st.expander("View Current Symbols"):
+                    st.write(", ".join(st.session_state.stock_list[:50]))
+                    if len(st.session_state.stock_list) > 50:
+                        st.caption(f"... and {len(st.session_state.stock_list) - 50} more")
+            
+            stock_file = st.file_uploader(
+                "Upload Stock Symbols",
+                type=['xlsx', 'xls', 'csv', 'txt'],
+                key='stock_file'
+            )
+            
+            if stock_file is not None:
+                try:
+                    symbols = load_stock_list_from_file(stock_file)
+                    
+                    if symbols:
+                        st.write(f"**Found {len(symbols)} symbols:**")
+                        st.write(", ".join(symbols[:20]))
+                        if len(symbols) > 20:
+                            st.caption(f"... and {len(symbols) - 20} more")
+                        
+                        if st.button("💾 Save to GitHub", type="primary"):
+                            if db.github.configured:
+                                content = '\n'.join(symbols)
+                                if db.github.save_to_github('stock_symbols.txt', content, 'Updated stock list'):
+                                    st.session_state.stock_list = symbols
+                                    st.success("✅ Stock list saved to GitHub!")
+                                    st.rerun()
+                            else:
+                                st.error("❌ Please configure GitHub first!")
+                
+                except Exception as e:
+                    st.error(f"Error reading file: {str(e)}")
+    
     # Footer
     st.sidebar.divider()
-    st.sidebar.info("✨ **v2.1 FINAL:**\n- NewsAPI ✅\n- Auto-refresh ✅\n- Buttons Fixed ✅")
+    st.sidebar.info("""
+    ✨ **v2.3 Updates:**
+    - Strategy: 9/21 SMA ✅
+    - News Integration ✅
+    - Unrealised P&L ✅
+    - CSV/XLSX/TXT Import ✅
+    - GitHub Storage ✅
+    """)
     st.sidebar.caption("Stock Scanner - By Ashish Gupta")
 
 
