@@ -984,7 +984,7 @@ def main():
     st.markdown("<h1 class='main-header'>🚀 Unified Trading System v2.3</h1>", unsafe_allow_html=True)
     
     # ==================== STOCK SCANNER ====================
-    elif page == "🔍 Stock Scanner":
+    if page == "🔍 Stock Scanner":
         st.header("Stock Market Scanner with News (NewsAPI Included)")
         st.info("🎯 Scans for: SMA crossover (last 5 days) + High Volume (1.5x 21-day avg)")
         
