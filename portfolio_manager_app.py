@@ -996,67 +996,75 @@ def main():
     st.sidebar.title("📊 Trading System v2.3")
     
     # GitHub Configuration
-    with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
-        github_owner = st.text_input("GitHub Username")
-        github_repo = st.text_input("Repository Name")
-        github_token = st.text_input("Access Token", type="password")
+    #with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
+    #    github_owner = st.text_input("GitHub Username")
+    #    github_repo = st.text_input("Repository Name")
+    #    github_token = st.text_input("Access Token", type="password")
         
-        if st.button("💾 Connect & Save"):
-            if github_token and github_repo:
-                # Save token permanently
-                if save_token(github_token, github_repo):
-                    db.github.token = github_token
-                    db.github.repo= github_repo
-                    st.success("✅ Connected & Token Saved!")
-                    st.info("Token will persist - no need to re-enter!")
-                    st.rerun()
-                else:
-                    st.error("Failed to save token")
-            else:
-                st.error("Enter both token and repo name")
+    # GitHub Configuration
+    with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
         
         if db.github.configured:
+            # Connected - show status and actions
             st.success("✅ Connected")
-            st.caption(f"📁 Repo: {db.github.repo_name}")
+            st.caption(f"📁 Repository: {db.github.repo_name}")
             
             # Sync buttons
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("⬆️ Sync"):
                     db.sync_to_github()
+                    st.success("Synced!")
             with col2:
                 if st.button("⬇️ Load"):
                     db.sync_from_github()
                     st.rerun()
             
-            # Disconnect button
+            # Disconnect
             st.divider()
             if st.button("🔓 Disconnect"):
                 delete_token()
                 db.github.token = None
+                db.github.repo_name = None
                 db.github.configured = False
                 if 'token_loaded' in st.session_state:
                     del st.session_state.token_loaded
-                st.success("Disconnected")
                 st.rerun()
         
         else:
-            # Not connected - show input fields
-            github_owner = st.text_input("GitHub Username")
-            github_repo = st.text_input("Repository Name")
-            github_token = st.text_input("Access Token", type="password")
+            # Not connected - show form
+            st.warning("⚠️ Not Connected")
             
-            if st.button("💾 Connect & Save", type="primary", use_container_width=True):
+            github_repo = st.text_input(
+                "Repository Name",
+                placeholder="username/repo-name",
+                help="Format: your-username/your-repository"
+            )
+            
+            github_token = st.text_input(
+                "Access Token",
+                type="password",
+                help="Generate at: github.com/settings/tokens"
+            )
+            
+            if st.button("💾 Connect & Save", type="primary"):
                 if github_token and github_repo:
+                    # Save token to file
                     if save_token(github_token, github_repo):
+                        # Set attributes directly (no methods)
                         db.github.token = github_token
-                        db.github.repo = github_repo
-                        st.success("✅ Connected & Saved!")
+                        db.github.repo_name = github_repo
+                        db.github.configured = True
+                        st.success("✅ Connected & Token Saved!")
+                        st.info("💡 Token will persist forever!")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error("❌ Failed to save")
+                        st.error("❌ Failed to save token")
                 else:
-                    st.error("⚠️ Enter token and repo")
+                    st.error("⚠️ Please enter both token and repository name")
+        
+        st.caption("💡 Token is saved locally and persists forever")
                 
     page = st.sidebar.radio(
         "Navigation",
