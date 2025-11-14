@@ -789,8 +789,10 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         
         # Detect crossover in last 5 days
         crossover_detected = False
-        crossover_type = None
-        crossover_day = None
+        bullish_crossover_detected = False
+        bearish_crossover_detected = False
+        bullish_crossover_day = None
+        bearish_crossover_day = None
         
         for i in range(1, min(6, len(hist))):
             prev = hist.iloc[-(i+1)]
@@ -800,7 +802,8 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
                 if prev['SMA9'] <= prev['SMA21'] and curr['SMA9'] > curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BULLISH'
-                    crossover_day = i                    
+                    crossover_day = i
+                    
                 if prev['SMA9'] >= prev['SMA21'] and curr['SMA9'] < curr['SMA21']:
                     crossover_detected = True
                     crossover_type = 'BEARISH'
@@ -819,6 +822,20 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
             if crossover_type == 'BEARISH' and latest_sma9 >= latest_sma21:
                 crossover_detected = False
                 crossover_type = None
+
+            crossover_detected = bullish_crossover_detected or bearish_crossover_detected
+        
+            if bullish_crossover_detected:
+                crossover_type = 'BULLISH'
+                crossover_day = bullish_crossover_day
+            elif bearish_crossover_detected:
+                crossover_type = 'BEARISH'
+                crossover_day = bearish_crossover_day
+            else:
+                crossover_type = None
+                crossover_day = None
+            
+            current_trend = 'BULLISH' if sma9 > sma21 else 'BEARISH'
             
         # Volume analysis - ORIGINAL LOGIC
         today_volume = hist['Volume'].iloc[-1]
