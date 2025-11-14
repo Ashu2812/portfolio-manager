@@ -761,22 +761,22 @@ def load_portfolio_from_file(file) -> pd.DataFrame:
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
     """
-    STRATEGY UNCHANGED - 9/21 SMA CROSSOVER + VOLUME > 1.5x
-    EXACT ORIGINAL LOGIC FROM v2.1
+    COMPLETE WORKING VERSION - Detects both Bullish and Bearish signals
+    Strategy: SMA 9/21 crossover within last 5 days + High Volume (1.5x+)
     """
     try:
+        # Fetch stock data
         ticker = yf.Ticker(f"{symbol}.NS")
         hist = ticker.history(period="3mo")
         
         if hist.empty or len(hist) < 30:
             return None
         
+        # Calculate SMAs
         hist['SMA9'] = hist['Close'].rolling(window=9).mean()
         hist['SMA21'] = hist['Close'].rolling(window=21).mean()
         
-        # Volume average (excluding current day - ORIGINAL LOGIC)
-        vol_21day_avg = hist['Volume'].iloc[-22:-1].mean() if len(hist) >= 22 else hist['Volume'].iloc[:-1].mean()
-        
+        # Get latest values
         latest = hist.iloc[-1]
         current_price = latest['Close']
         sma9 = latest['SMA9']
@@ -785,59 +785,66 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         if pd.isna(sma9) or pd.isna(sma21):
             return None
         
+        # Calculate 21-day volume average (excluding current day)
+        vol_21day_avg = hist['Volume'].iloc[-22:-1].mean() if len(hist) >= 22 else hist['Volume'].iloc[:-1].mean()
+        
+        # Current trend
         current_trend = 'BULLISH' if sma9 > sma21 else 'BEARISH'
         
-        # Detect crossover in last 5 days
-        crossover_detected = False
+        # ============= CROSSOVER DETECTION - WORKING VERSION =============
         bullish_crossover_detected = False
         bearish_crossover_detected = False
         bullish_crossover_day = None
         bearish_crossover_day = None
         
+        # Check all 5 days (NO BREAK - must check all days!)
         for i in range(1, min(6, len(hist))):
             prev = hist.iloc[-(i+1)]
             curr = hist.iloc[-i]
             
-            if pd.notna(prev['SMA9']) and pd.notna(prev['SMA21']) and pd.notna(curr['SMA9']) and pd.notna(curr['SMA21']):
+            # Check both SMAs are valid
+            if pd.notna(prev['SMA9']) and pd.notna(prev['SMA21']) and \
+               pd.notna(curr['SMA9']) and pd.notna(curr['SMA21']):
+                
+                # Check for BULLISH crossover (SMA9 crosses above SMA21)
                 if prev['SMA9'] <= prev['SMA21'] and curr['SMA9'] > curr['SMA21']:
-                    crossover_detected = True
-                    crossover_type = 'BULLISH'
-                    crossover_day = i
-                    
+                    if not bullish_crossover_detected:
+                        bullish_crossover_detected = True
+                        bullish_crossover_day = i
+                
+                # Check for BEARISH crossover (SMA9 crosses below SMA21)
+                # Use 'if' not 'elif' - must check independently!
                 if prev['SMA9'] >= prev['SMA21'] and curr['SMA9'] < curr['SMA21']:
-                    crossover_detected = True
-                    crossover_type = 'BEARISH'
-                    crossover_day = i
+                    if not bearish_crossover_detected:
+                        bearish_crossover_detected = True
+                        bearish_crossover_day = i
         
-        if crossover_detected:
-            latest_sma9 = hist['SMA9'].iloc[-1]
-            latest_sma21 = hist['SMA21'].iloc[-1]
-            
-            # Validate bullish crossover is still active
-            if crossover_type == 'BULLISH' and latest_sma9 <= latest_sma21:
-                crossover_detected = False
-                crossover_type = None
-            
-            # Validate bearish crossover is still active
-            if crossover_type == 'BEARISH' and latest_sma9 >= latest_sma21:
-                crossover_detected = False
-                crossover_type = None
-
-            crossover_detected = bullish_crossover_detected or bearish_crossover_detected
+        # Validate crossovers are still active (CRITICAL STEP)
+        if bullish_crossover_detected and sma9 <= sma21:
+            # Bullish crossover happened but SMA9 has fallen back below SMA21
+            bullish_crossover_detected = False
+            bullish_crossover_day = None
         
-            if bullish_crossover_detected:
-                crossover_type = 'BULLISH'
-                crossover_day = bullish_crossover_day
-            elif bearish_crossover_detected:
-                crossover_type = 'BEARISH'
-                crossover_day = bearish_crossover_day
-            else:
-                crossover_type = None
-                crossover_day = None
-            
-            current_trend = 'BULLISH' if sma9 > sma21 else 'BEARISH'
-            
-        # Volume analysis - ORIGINAL LOGIC
+        if bearish_crossover_detected and sma9 >= sma21:
+            # Bearish crossover happened but SMA9 has risen back above SMA21
+            bearish_crossover_detected = False
+            bearish_crossover_day = None
+        
+        # Determine final crossover status
+        crossover_detected = bullish_crossover_detected or bearish_crossover_detected
+        
+        if bullish_crossover_detected:
+            crossover_type = 'BULLISH'
+            crossover_day = bullish_crossover_day
+        elif bearish_crossover_detected:
+            crossover_type = 'BEARISH'
+            crossover_day = bearish_crossover_day
+        else:
+            crossover_type = None
+            crossover_day = None
+        # ============= END CROSSOVER DETECTION =============
+        
+        # ============= VOLUME ANALYSIS - ORIGINAL LOGIC =============
         today_volume = hist['Volume'].iloc[-1]
         yesterday_volume = hist['Volume'].iloc[-2] if len(hist) >= 2 else 0
         
@@ -847,7 +854,9 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
         
         volume_ratio_today = today_volume / vol_21day_avg if vol_21day_avg > 0 else 0
         volume_ratio_yesterday = yesterday_volume / vol_21day_avg if vol_21day_avg > 0 else 0
+        # ============= END VOLUME ANALYSIS =============
         
+        # Return complete result
         return {
             'symbol': symbol,
             'company_name': company_name,
@@ -866,6 +875,7 @@ def analyze_stock(symbol: str, company_name: str) -> Dict:
             'today_volume': today_volume,
             'yesterday_volume': yesterday_volume
         }
+        
     except Exception as e:
         return None
 
