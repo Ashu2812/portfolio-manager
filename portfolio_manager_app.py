@@ -979,7 +979,9 @@ def main():
     # Initialize database
     if 'db' not in st.session_state:
         st.session_state.db = PortfolioDatabase()
-
+    
+    db = st.session_state.db
+    
     # ⭐ AUTO-LOAD GITHUB TOKEN (Add this)
     if 'github_token_loaded' not in st.session_state:
         saved_token = load_github_token()
@@ -998,7 +1000,6 @@ def main():
     if 'temp_symbols' not in st.session_state:
         st.session_state.temp_symbols = []
     
-    db = st.session_state.db
     news_agg = st.session_state.news_aggregator
     
     # Load stock list from GitHub if available
@@ -1007,8 +1008,18 @@ def main():
         if content:
             st.session_state.stock_list = [line.strip() for line in content.split('\n') if line.strip()]
     
+    st.markdown('<p class="main-header">📊 Unified Stock Scanner </p>', unsafe_allow_html=True)
+    
     # Sidebar
-    st.sidebar.title("📊 Trading System v2.3")
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Select Module", [
+        "🏠 Dashboard",
+        "📈 Stock Scanner",
+        "💼 Portfolio Manager",
+        "➕ Add Transaction",
+        "📜 Transaction History",
+        "💰 Realized P&L"
+    ])
     
     # ==================== GITHUB STORAGE (SIDEBAR) ====================
     with st.sidebar:
