@@ -503,7 +503,7 @@ def main():
     db = st.session_state.db
     
     # Header
-    st.markdown('<p class="main-header">📊 Unified Stock Scanner </p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">📊 Unified Trading System v1.0</p>', unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.title("Navigation")
@@ -920,7 +920,7 @@ def main():
     # Footer
     st.sidebar.divider()
     st.sidebar.info("💡 **Tip:** Upload Excel files once and use forever!")
-    st.sidebar.caption("Unified Stock Scanner - by Ashish Gupta")
+    st.sidebar.caption("Unified Trading System v2.0 with Excel Upload")
 
 
 if __name__ == "__main__":
