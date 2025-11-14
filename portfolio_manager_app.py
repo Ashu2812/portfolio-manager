@@ -1119,7 +1119,7 @@ def main():
                                     st.subheader("📰 News Sentiment Analysis")
                                     
                                     # Fetch news
-                                    news_data = news_agg.aggregate_news(result['symbol'], result['company_name'])
+                                    news_data = news_agg.get_all_news(result['symbol'], result['company_name'])
                                     
                                     # Display sentiment
                                     sentiment_col1, sentiment_col2 = st.columns([2, 1])
@@ -1195,7 +1195,7 @@ def main():
                                     st.subheader("📰 News Sentiment Analysis")
                                     
                                     # Fetch news
-                                    news_data = news_agg.aggregate_news(result['symbol'], result['company_name'])
+                                    news_data = news_agg.get_all_news(result['symbol'], result['company_name'])
                                     
                                     # Display sentiment
                                     sentiment_col1, sentiment_col2 = st.columns([2, 1])
