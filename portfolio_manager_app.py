@@ -1022,7 +1022,7 @@ def main():
                 st.info(f"📊 {len(st.session_state.stock_list)} stocks loaded")
                 
                 if st.button("🔍 Start Scanning", type="primary"):
-                    # ✅ FIXED: Separate lists for bullish and bearish
+                    # Separate lists for bullish and bearish
                     bullish_signals = []
                     bearish_signals = []
                     
@@ -1038,7 +1038,7 @@ def main():
                         if stock_info['valid']:
                             analysis = analyze_stock(symbol, stock_info['name'])
                             if analysis:
-                                # ✅ FIXED: Collect both bullish and bearish signals
+                                # Collect both bullish and bearish signals
                                 if analysis['crossover_detected'] and analysis['high_volume']:
                                     if analysis['crossover_type'] == 'BULLISH':
                                         bullish_signals.append(analysis)
@@ -1050,7 +1050,6 @@ def main():
                     progress_bar.empty()
                     status_text.empty()
                     
-                    # ✅ FIXED: Check for either type of signal
                     if bullish_signals or bearish_signals:
                         st.success(f"✅ Found {len(bullish_signals)} bullish and {len(bearish_signals)} bearish signals!")
                         
@@ -1077,12 +1076,13 @@ def main():
                         # Show detailed results with news
                         st.divider()
                         
-                        # Detailed Bullish Analysis
+                        # ==================== BULLISH SIGNALS - DETAILED ====================
                         if bullish_signals:
-                            st.subheader("📊 Detailed Bullish Analysis with News")
+                            st.subheader("🟢 Detailed Bullish Analysis with News & Recommendations")
                             
                             for result in bullish_signals:
-                                with st.expander(f"🟢 {result['symbol']} - {result['company_name']}"):
+                                with st.expander(f"🟢 {result['symbol']} - {result['company_name']}", expanded=True):
+                                    # Metrics
                                     col1, col2, col3 = st.columns(3)
                                     
                                     with col1:
@@ -1094,28 +1094,71 @@ def main():
                                         st.metric("Trend", result['trend'])
                                     
                                     with col3:
-                                        st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x")
-                                        st.metric("Crossover Day", f"{result['crossover_day']} days ago")
+                                        volume_emoji = "🔥" if result['high_volume_today'] else ""
+                                        st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x {volume_emoji}")
+                                        st.metric("Crossover", f"{result['crossover_day']} days ago")
                                     
                                     st.divider()
-                                    st.subheader("📰 Latest News")
                                     
-                                    news_articles = news_agg.get_all_news(result['symbol'], result['company_name'])
+                                    # Volume Details
+                                    st.subheader("📊 Volume Analysis")
+                                    vol_today = result['today_volume']
+                                    vol_yesterday = result['yesterday_volume']
                                     
-                                    if news_articles:
-                                        for article in news_articles:
-                                            st.markdown(f"**{article['source']}** | {article['date']}")
-                                            st.markdown(f"[{article['title']}]({article['url']})")
-                                            st.markdown("---")
+                                    st.write(f"**Today:** {format_volume(vol_today)} ({result['volume_ratio']:.2f}x of 21-day avg)")
+                                    if result['high_volume_today']:
+                                        st.success("🔥 HIGH VOLUME TODAY - Strong buying interest!")
+                                    
+                                    st.write(f"**Yesterday:** {format_volume(vol_yesterday)} ({result['volume_ratio_yesterday']:.2f}x of 21-day avg)")
+                                    if result['high_volume_yesterday']:
+                                        st.success("🔥 HIGH VOLUME YESTERDAY")
+                                    
+                                    st.divider()
+                                    
+                                    # NEWS SECTION
+                                    st.subheader("📰 News Sentiment Analysis")
+                                    
+                                    # Fetch news
+                                    news_data = news_agg.aggregate_news(result['symbol'], result['company_name'])
+                                    
+                                    # Display sentiment
+                                    sentiment_col1, sentiment_col2 = st.columns([2, 1])
+                                    with sentiment_col1:
+                                        st.write(f"**Sentiment:** {news_data.get('sentiment_label', 'N/A')}")
+                                    with sentiment_col2:
+                                        sentiment_score = news_data.get('sentiment_score', 0)
+                                        st.metric("Score", f"{sentiment_score:.3f}")
+                                    
+                                    sources = news_data.get('sources_used', ['Multiple sources'])
+                                    st.caption(f"📊 **{news_data.get('article_count', 0)} articles** analyzed from: {', '.join(sources)}")
+                                    
+                                    # Display headlines
+                                    headlines = news_data.get('headlines', [])
+                                    if headlines:
+                                        st.write("**Recent Headlines:**")
+                                        for idx, headline in enumerate(headlines[:5], 1):
+                                            st.markdown(f"{idx}. [{headline['title']}]({headline.get('url', '#')})")
+                                            st.caption(f"   {headline['source']} - {headline['date']}")
                                     else:
-                                        st.info("No recent news found")
+                                        st.info("ℹ️ No recent headlines found (last 7 days)")
+                                    
+                                    st.divider()
+                                    
+                                    # TRADING RECOMMENDATION - BULLISH
+                                    st.subheader("💡 Trading Recommendation")
+                                    st.success("🎯 **Action:** Strong BUY opportunity with technical confirmation")
+                                    st.write(f"📍 **Entry:** Around current levels (₹{result['current_price']:.2f}) or on minor pullback")
+                                    st.write(f"🛑 **Stop Loss:** Below ₹{result['sma21']:.2f} (21 SMA) or recent swing low")
+                                    st.write(f"🎁 **Risk/Reward:** Favorable with volume confirmation")
+                                    st.info("⚠️ **Note:** Always use proper position sizing and risk management")
                         
-                        # Detailed Bearish Analysis
+                        # ==================== BEARISH SIGNALS - DETAILED ====================
                         if bearish_signals:
-                            st.subheader("📊 Detailed Bearish Analysis with News")
+                            st.subheader("🔴 Detailed Bearish Analysis with News & Recommendations")
                             
                             for result in bearish_signals:
-                                with st.expander(f"🔴 {result['symbol']} - {result['company_name']}"):
+                                with st.expander(f"🔴 {result['symbol']} - {result['company_name']}", expanded=True):
+                                    # Metrics
                                     col1, col2, col3 = st.columns(3)
                                     
                                     with col1:
@@ -1127,21 +1170,63 @@ def main():
                                         st.metric("Trend", result['trend'])
                                     
                                     with col3:
-                                        st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x")
-                                        st.metric("Crossover Day", f"{result['crossover_day']} days ago")
+                                        volume_emoji = "🔥" if result['high_volume_today'] else ""
+                                        st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x {volume_emoji}")
+                                        st.metric("Crossover", f"{result['crossover_day']} days ago")
                                     
                                     st.divider()
-                                    st.subheader("📰 Latest News")
                                     
-                                    news_articles = news_agg.get_all_news(result['symbol'], result['company_name'])
+                                    # Volume Details
+                                    st.subheader("📊 Volume Analysis")
+                                    vol_today = result['today_volume']
+                                    vol_yesterday = result['yesterday_volume']
                                     
-                                    if news_articles:
-                                        for article in news_articles:
-                                            st.markdown(f"**{article['source']}** | {article['date']}")
-                                            st.markdown(f"[{article['title']}]({article['url']})")
-                                            st.markdown("---")
+                                    st.write(f"**Today:** {format_volume(vol_today)} ({result['volume_ratio']:.2f}x of 21-day avg)")
+                                    if result['high_volume_today']:
+                                        st.error("🔥 HIGH VOLUME TODAY - Strong selling pressure!")
+                                    
+                                    st.write(f"**Yesterday:** {format_volume(vol_yesterday)} ({result['volume_ratio_yesterday']:.2f}x of 21-day avg)")
+                                    if result['high_volume_yesterday']:
+                                        st.error("🔥 HIGH VOLUME YESTERDAY")
+                                    
+                                    st.divider()
+                                    
+                                    # NEWS SECTION
+                                    st.subheader("📰 News Sentiment Analysis")
+                                    
+                                    # Fetch news
+                                    news_data = news_agg.aggregate_news(result['symbol'], result['company_name'])
+                                    
+                                    # Display sentiment
+                                    sentiment_col1, sentiment_col2 = st.columns([2, 1])
+                                    with sentiment_col1:
+                                        st.write(f"**Sentiment:** {news_data.get('sentiment_label', 'N/A')}")
+                                    with sentiment_col2:
+                                        sentiment_score = news_data.get('sentiment_score', 0)
+                                        st.metric("Score", f"{sentiment_score:.3f}")
+                                    
+                                    sources = news_data.get('sources_used', ['Multiple sources'])
+                                    st.caption(f"📊 **{news_data.get('article_count', 0)} articles** analyzed from: {', '.join(sources)}")
+                                    
+                                    # Display headlines
+                                    headlines = news_data.get('headlines', [])
+                                    if headlines:
+                                        st.write("**Recent Headlines:**")
+                                        for idx, headline in enumerate(headlines[:5], 1):
+                                            st.markdown(f"{idx}. [{headline['title']}]({headline.get('url', '#')})")
+                                            st.caption(f"   {headline['source']} - {headline['date']}")
                                     else:
-                                        st.info("No recent news found")
+                                        st.info("ℹ️ No recent headlines found (last 7 days)")
+                                    
+                                    st.divider()
+                                    
+                                    # TRADING RECOMMENDATION - BEARISH
+                                    st.subheader("💡 Trading Recommendation")
+                                    st.error("🎯 **Action:** Consider SELL/SHORT with proper risk management")
+                                    st.write(f"📍 **Entry:** Around current levels (₹{result['current_price']:.2f}) or on minor bounce")
+                                    st.write(f"🛑 **Stop Loss:** Above ₹{result['sma21']:.2f} (21 SMA) or recent swing high")
+                                    st.write(f"⚠️ **Caution:** Monitor volume for continuation confirmation")
+                                    st.info("⚠️ **Note:** Always use proper position sizing and risk management")
                     
                     else:
                         st.warning("⚠️ No stocks found with crossover signals matching criteria")
