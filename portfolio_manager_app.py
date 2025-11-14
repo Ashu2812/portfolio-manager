@@ -1000,11 +1000,11 @@ def main():
         github_token = st.text_input("Access Token", value=st.session_state.get('github_token', ''), type="password")
         
         if st.button("💾 Connect & Save"):
-            if github_token and repo_name:
+            if github_token and github_repo:
                 # Save token permanently
-                if save_token(github_token, repo_name):
+                if save_token(github_token, github_repo):
                     db.github.set_token(github_token)
-                    db.github.set_repo(repo_name)
+                    db.github.set_repo(github_repo)
                     st.success("✅ Connected & Token Saved!")
                     st.info("Token will persist - no need to re-enter!")
                     st.rerun()
