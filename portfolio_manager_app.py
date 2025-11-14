@@ -688,6 +688,10 @@ def main():
     if 'news_aggregator' not in st.session_state:
         st.session_state.news_aggregator = IndianNewsAggregator()
     
+    # Initialize stock list
+    if 'stock_list' not in st.session_state:
+        st.session_state.stock_list = []
+    
     db = st.session_state.db
     news_agg = st.session_state.news_aggregator
     
@@ -754,6 +758,20 @@ def main():
     elif page == "📤 Upload Files":
         st.header("Upload Excel Files")
         
+        # Show currently loaded stock list if exists
+        if 'stock_list' in st.session_state and st.session_state.stock_list:
+            st.success(f"📊 **Currently loaded:** {len(st.session_state.stock_list)} stocks in memory")
+            with st.expander("View loaded stocks"):
+                st.write(", ".join(st.session_state.stock_list[:50]))
+                if len(st.session_state.stock_list) > 50:
+                    st.write(f"... and {len(st.session_state.stock_list)-50} more")
+            
+            if st.button("🗑️ Clear Stock List"):
+                st.session_state.stock_list = []
+                st.rerun()
+        
+        st.divider()
+        
         with st.expander("📋 Upload Stock List (for Scanner)", expanded=True):
             st.info("Upload Excel with stocks to scan. Expected column: 'Symbol'")
             stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list_uploader')
@@ -763,6 +781,7 @@ def main():
                 if symbols:
                     st.success(f"✅ Loaded {len(symbols)} stocks successfully!")
                     st.session_state.stock_list = symbols
+                    st.info("💾 Stock list saved to memory. You can now use it in the Scanner!")
                     
                     with st.expander("Preview Stocks"):
                         st.write(", ".join(symbols[:50]))
@@ -807,11 +826,17 @@ def main():
                     st.success(f"✅ Loaded {len(symbols_to_scan)} stocks")
         
         elif input_method == "Use Uploaded List":
-            if hasattr(st.session_state, 'stock_list') and st.session_state.stock_list:
+            if 'stock_list' in st.session_state and st.session_state.stock_list:
                 symbols_to_scan = st.session_state.stock_list
                 st.success(f"✅ Using {len(symbols_to_scan)} stocks from uploaded list")
             else:
                 st.warning("⚠️ No stock list uploaded. Go to 'Upload Files' first!")
+                # Debug info
+                with st.expander("🔍 Debug Info"):
+                    st.write(f"Session state has stock_list: {'stock_list' in st.session_state}")
+                    if 'stock_list' in st.session_state:
+                        st.write(f"Stock list content: {st.session_state.stock_list[:5] if st.session_state.stock_list else 'Empty list'}")
+                        st.write(f"Stock list length: {len(st.session_state.stock_list) if st.session_state.stock_list else 0}")
         
         else:
             stock_input = st.text_area("Enter stock symbols (one per line)",
