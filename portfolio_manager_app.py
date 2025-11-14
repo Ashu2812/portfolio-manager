@@ -1162,7 +1162,7 @@ def main():
     
     # Footer
     st.sidebar.divider()
-    st.sidebar.info("✨ **v2.2 FINAL")
+    st.sidebar.info("✨ **v2.1 FINAL:**\n- NewsAPI ✅\n- Auto-refresh ✅\n- Buttons Fixed ✅")
     st.sidebar.caption("Stock Scanner - By Ashish Gupta")
 
 
