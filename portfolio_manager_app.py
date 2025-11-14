@@ -692,6 +692,10 @@ def main():
     if 'stock_list' not in st.session_state:
         st.session_state.stock_list = []
     
+    # Initialize temporary symbols storage
+    if 'temp_symbols' not in st.session_state:
+        st.session_state.temp_symbols = []
+    
     db = st.session_state.db
     news_agg = st.session_state.news_aggregator
     
@@ -766,7 +770,7 @@ def main():
                 if len(st.session_state.stock_list) > 50:
                     st.write(f"... and {len(st.session_state.stock_list)-50} more")
             
-            if st.button("🗑️ Clear Stock List"):
+            if st.button("🗑️ Clear Stock List", key="clear_stocks"):
                 st.session_state.stock_list = []
                 st.rerun()
         
@@ -776,17 +780,36 @@ def main():
             st.info("Upload Excel with stocks to scan. Expected column: 'Symbol'")
             stock_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'], key='stock_list_uploader')
             
-            if stock_file:
+            if stock_file is not None:
+                # Load symbols from file
                 symbols = load_stock_list_from_excel(stock_file)
                 if symbols:
-                    st.success(f"✅ Loaded {len(symbols)} stocks successfully!")
-                    st.session_state.stock_list = symbols
-                    st.info("💾 Stock list saved to memory. You can now use it in the Scanner!")
+                    st.session_state.temp_symbols = symbols
+                    st.success(f"✅ Loaded {len(symbols)} stocks from file!")
                     
                     with st.expander("Preview Stocks"):
                         st.write(", ".join(symbols[:50]))
                         if len(symbols) > 50:
                             st.write(f"... and {len(symbols)-50} more")
+                    
+                    # Add explicit save button
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        if st.button("💾 Save to Scanner", type="primary", key="save_stocks"):
+                            st.session_state.stock_list = st.session_state.temp_symbols.copy()
+                            st.success(f"✅ Saved {len(st.session_state.stock_list)} stocks to memory!")
+                            st.info("🎯 Go to Stock Scanner and select 'Use Uploaded List'")
+                            st.balloons()
+                            time.sleep(1)
+                            st.rerun()
+                    with col2:
+                        st.info("👈 Click 'Save to Scanner' to make stocks available in Scanner")
+                else:
+                    st.error("❌ Could not load stocks from file. Check the format.")
+            elif st.session_state.temp_symbols:
+                # Show previously loaded temp symbols (file still in uploader state)
+                st.info(f"📋 {len(st.session_state.temp_symbols)} stocks loaded. Click 'Save to Scanner' button above.")
+        
         
         with st.expander("💼 Upload Portfolio (Bulk Import)", expanded=True):
             st.info("Upload Excel with: Symbol, Company (optional), Quantity, Avg Price")
