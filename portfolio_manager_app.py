@@ -961,6 +961,16 @@ def main():
     if 'db' not in st.session_state:
         st.session_state.db = PortfolioDatabase()
     
+    db = st.session_state.db
+    # This is where I have changed the code as per my understanding
+    # Auto-load saved GitHub token (NEW CODE)
+    if 'token_loaded' not in st.session_state:
+        saved_token, saved_repo = load_token()
+        if saved_token:
+            db.github.set_token(saved_token)
+            db.github.set_repo(saved_repo)
+        st.session_state.token_loaded = True
+        
     # Initialize news aggregator with NewsAPI
     if 'news_aggregator' not in st.session_state:
         st.session_state.news_aggregator = IndianNewsAggregator()
@@ -972,17 +982,7 @@ def main():
     if 'temp_symbols' not in st.session_state:
         st.session_state.temp_symbols = []
     
-    db = st.session_state.db
     news_agg = st.session_state.news_aggregator
-
-    # This is where I have changed the code as per my understanding
-    # Auto-load saved GitHub token (NEW CODE)
-    if 'token_loaded' not in st.session_state:
-        saved_token, saved_repo = load_token()
-        if saved_token:
-            db.github.set_token(saved_token)
-            db.github.set_repo(saved_repo)
-        st.session_state.token_loaded = True
     
     # Load stock list from GitHub if available
     if db.github.configured and not st.session_state.stock_list:
@@ -995,9 +995,9 @@ def main():
     
     # GitHub Configuration
     with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
-        github_owner = st.text_input("GitHub Username", value=st.session_state.get('github_owner', ''))
-        github_repo = st.text_input("Repository Name", value=st.session_state.get('github_repo', ''))
-        github_token = st.text_input("Access Token", value=st.session_state.get('github_token', ''), type="password")
+        github_owner = st.text_input("GitHub Username")
+        github_repo = st.text_input("Repository Name")
+        github_token = st.text_input("Access Token", type="password")
         
         if st.button("💾 Connect & Save"):
             if github_token and github_repo:
@@ -1015,6 +1015,9 @@ def main():
         
         if db.github.configured:
             st.success("✅ Connected")
+            st.caption(f"📁 Repo: {db.github.repo_name}")
+            
+            # Sync buttons
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("⬆️ Sync"):
@@ -1023,16 +1026,35 @@ def main():
                 if st.button("⬇️ Load"):
                     db.sync_from_github()
                     st.rerun()
-        
-        if db.github.configured:
-            st.success("✅ Connected")
-            if st.button("Disconnect"):
+            
+            # Disconnect button
+            st.divider()
+            if st.button("🔓 Disconnect"):
                 delete_token()
                 db.github.token = None
                 db.github.configured = False
                 if 'token_loaded' in st.session_state:
                     del st.session_state.token_loaded
+                st.success("Disconnected")
                 st.rerun()
+        
+        else:
+            # Not connected - show input fields
+            github_owner = st.text_input("GitHub Username")
+            github_repo = st.text_input("Repository Name")
+            github_token = st.text_input("Access Token", type="password")
+            
+            if st.button("💾 Connect & Save", type="primary", use_container_width=True):
+                if github_token and github_repo:
+                    if save_token(github_token, github_repo):
+                        db.github.set_token(github_token)
+                        db.github.set_repo(github_repo)
+                        st.success("✅ Connected & Saved!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to save")
+                else:
+                    st.error("⚠️ Enter token and repo")
                 
     page = st.sidebar.radio(
         "Navigation",
