@@ -984,140 +984,109 @@ def main():
     st.markdown("<h1 class='main-header'>🚀 Unified Trading System v2.3</h1>", unsafe_allow_html=True)
     
     # ==================== STOCK SCANNER ====================
-    if page == "🔍 Stock Scanner":
-        st.header("Stock Market Scanner with News (NewsAPI Included)")
-        st.info("🎯 Scans for: SMA crossover (last 5 days) + High Volume (1.5x 21-day avg)")
+    if page == "📈 Stock Scanner":
+        st.header("Stock Scanner - 9/21 SMA + Volume Strategy")
         
-        input_method = st.radio("Select input method:", ["Upload Excel", "Manual Entry", "Use Uploaded List"])
+        st.info("📋 Upload stock list (Excel/CSV/TXT) or load from GitHub")
         
-        symbols_to_scan = []
+        col1, col2 = st.columns([3, 1])
         
-        if input_method == "Upload Excel":
-            file = st.file_uploader("Upload Excel with stocks", type=['xlsx', 'xls'])
-            if file:
-                symbols_to_scan = load_stock_list_from_excel(file)
-                if symbols_to_scan:
-                    st.success(f"✅ Loaded {len(symbols_to_scan)} stocks")
+        with col1:
+            uploaded_file = st.file_uploader(
+                "Upload Stock List",
+                type=['xlsx', 'xls', 'csv', 'txt'],
+                help="Upload Excel, CSV, or TXT file with stock symbols"
+            )
         
-        elif input_method == "Use Uploaded List":
-            if 'stock_list' in st.session_state and st.session_state.stock_list:
-                symbols_to_scan = st.session_state.stock_list
-                st.success(f"✅ Using {len(symbols_to_scan)} stocks from uploaded list")
-            else:
-                st.warning("⚠️ No stock list uploaded. Go to 'Upload Files' first!")
+        with col2:
+            if st.button("📥 Use GitHub List", disabled=not db.github.configured):
+                content = db.github.load_from_github('stock_symbols.txt')
+                if content:
+                    st.session_state.stock_list = [line.strip() for line in content.split('\n') if line.strip()]
+                    st.success(f"✅ Loaded {len(st.session_state.stock_list)} symbols")
         
-        else:
-            stock_input = st.text_area("Enter stock symbols (one per line)",
-                                      "RELIANCE\nTCS\nINFY\nHDFCBANK\nICICIBANK",
-                                      height=200)
-            symbols_to_scan = [s.strip().upper() for s in stock_input.split('\n') if s.strip()]
-        
-        scan_button = st.button("🔍 Start Scanning with News", type="primary")
-        
-        if scan_button and symbols_to_scan:
-            st.info(f"⏳ Scanning {len(symbols_to_scan)} stocks with news... This may take a few minutes.")
-            
-            # ⭐ FIXED: Separate lists for bullish and bearish signals
-            bullish_signals = []
-            bearish_signals = []
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, symbol in enumerate(symbols_to_scan):
-                status_text.text(f"Analyzing {symbol}... ({i+1}/{len(symbols_to_scan)})")
-                result = analyze_stock(symbol, symbol)
+        if uploaded_file:
+            symbols = load_stock_list_from_file(uploaded_file)
+            if symbols:
+                st.session_state.stock_list = symbols
                 
-                # ⭐ FIXED: Check for BOTH bullish AND bearish signals
-                if result and result['crossover_detected'] and result['crossover_day'] <= 5:
-                    if result['high_volume']:
-                        # Fetch news
-                        news = news_agg.aggregate_news(symbol, result['company_name'])
-                        result['news'] = news
-                        
-                        # ⭐ FIXED: Append to correct list based on type
-                        if result['crossover_type'] == 'BULLISH':
-                            bullish_signals.append(result)
-                        elif result['crossover_type'] == 'BEARISH':
-                            bearish_signals.append(result)
+                # Save to GitHub
+                if db.github.configured:
+                    content = '\n'.join(symbols)
+                    db.github.save_to_github('stock_symbols.txt', content, 'Updated stock list')
+                    st.success(f"✅ Loaded {len(symbols)} symbols (saved to GitHub)")
+                else:
+                    st.success(f"✅ Loaded {len(symbols)} symbols")
+        
+        if st.session_state.stock_list:
+            st.info(f"📊 {len(st.session_state.stock_list)} stocks loaded")
+            
+            if st.button("🔍 Start Scanning", type="primary"):
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                progress_bar.progress((i + 1) / len(symbols_to_scan))
-                time.sleep(0.5)
-            
-            progress_bar.empty()
-            status_text.empty()
-            
-            # ⭐ FIXED: Show counts for both types
-            st.success(f"✅ Scan complete! Found {len(bullish_signals)} bullish and {len(bearish_signals)} bearish signals")
-            
-            # Display Bullish Signals
-            if bullish_signals:
-                st.subheader("🟢 Bullish Signals")
-                for sig in bullish_signals:
-                    with st.expander(f"🟢 {sig['symbol']} - ₹{sig['current_price']:.2f}", expanded=True):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Trend:** {sig['trend']}")
-                            st.write(f"**Crossover:** {sig['crossover_day']} days ago")
-                        with col2:
-                            st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
-                            st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        
-                        st.write(f"**📊 Volume Analysis:**")
-                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
-                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
-                        
-                        # News section
-                        news = sig.get('news', {})
-                        st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
-                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
-                        
-                        articles = news.get('articles', [])
-                        if articles:
-                            st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:5], 1):
-                                st.write(f"{idx}. [{article['title']}]({article['url']})")
-                                st.caption(f"   {article['source']} - {article['date']}")
-                        else:
-                            st.caption("ℹ️ No recent news found")
-                        
-                        st.success("💡 **Recommendation:** Consider BUY with stop loss below ₹{:.2f} (SMA21)".format(sig['sma21']))
-            
-            # Display Bearish Signals
-            if bearish_signals:
-                st.subheader("🔴 Bearish Signals")
-                for sig in bearish_signals:
-                    with st.expander(f"🔴 {sig['symbol']} - ₹{sig['current_price']:.2f}", expanded=True):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Trend:** {sig['trend']}")
-                            st.write(f"**Crossover:** {sig['crossover_day']} days ago")
-                        with col2:
-                            st.write(f"**SMA9:** ₹{sig['sma9']:.2f}")
-                            st.write(f"**SMA21:** ₹{sig['sma21']:.2f}")
-                        
-                        st.write(f"**📊 Volume Analysis:**")
-                        st.write(f"  • Today: {format_volume(sig['today_volume'])} ({sig['volume_ratio']:.2f}x avg) {'🔥' if sig['high_volume_today'] else ''}")
-                        st.write(f"  • Yesterday: {format_volume(sig['yesterday_volume'])} ({sig['volume_ratio_yesterday']:.2f}x avg) {'🔥' if sig['high_volume_yesterday'] else ''}")
-                        
-                        # News section
-                        news = sig.get('news', {})
-                        st.write(f"**📰 News Sentiment:** {news.get('sentiment_label', 'N/A')} (Score: {news.get('sentiment_score', 0):.3f})")
-                        st.caption(f"Sources: Google News, Economic Times, Moneycontrol, NewsAPI")
-                        
-                        articles = news.get('articles', [])
-                        if articles:
-                            st.write(f"**Latest Headlines ({len(articles)}):**")
-                            for idx, article in enumerate(articles[:5], 1):
-                                st.write(f"{idx}. [{article['title']}]({article['url']})")
-                                st.caption(f"   {article['source']} - {article['date']}")
-                        else:
-                            st.caption("ℹ️ No recent news found")
-                        
-                        st.error("💡 **Recommendation:** Consider SELL/SHORT with stop loss above ₹{:.2f} (SMA21)".format(sig['sma21']))
-            
-            if not bullish_signals and not bearish_signals:
-                st.info("ℹ️ No signals found matching criteria (crossover within 5 days + high volume >1.5x)")
+                for idx, symbol in enumerate(st.session_state.stock_list):
+                    progress = (idx + 1) / len(st.session_state.stock_list)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Scanning {symbol}... ({idx+1}/{len(st.session_state.stock_list)})")
+                    
+                    stock_info = get_stock_info(symbol)
+                    if stock_info['valid']:
+                        analysis = analyze_stock(symbol, stock_info['name'])
+                        if analysis:
+                            if analysis['crossover_detected'] and analysis['crossover_type'] == 'BULLISH' and analysis['high_volume']:
+                                results.append(analysis)
+                    
+                    time.sleep(0.3)
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                if results:
+                    st.success(f"✅ Found {len(results)} stocks with bullish signals!")
+                    
+                    df_results = pd.DataFrame(results)
+                    st.dataframe(
+                        df_results[['symbol', 'company_name', 'current_price', 'sma9', 'sma21',
+                                  'crossover_day', 'volume_ratio', 'trend']],
+                        use_container_width=True
+                    )
+                    
+                    # Show detailed results with news
+                    st.divider()
+                    st.subheader("📰 Detailed Analysis with News")
+                    
+                    for result in results:
+                        with st.expander(f"📊 {result['symbol']} - {result['company_name']}"):
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Current Price", f"₹{result['current_price']:.2f}")
+                                st.metric("SMA 9", f"₹{result['sma9']:.2f}")
+                            
+                            with col2:
+                                st.metric("SMA 21", f"₹{result['sma21']:.2f}")
+                                st.metric("Trend", result['trend'])
+                            
+                            with col3:
+                                st.metric("Volume Ratio", f"{result['volume_ratio']:.2f}x")
+                                st.metric("Crossover Day", f"{result['crossover_day']} days ago")
+                            
+                            st.divider()
+                            st.subheader("📰 Latest News")
+                            
+                            news_articles = news_agg.get_all_news(result['symbol'], result['company_name'])
+                            
+                            if news_articles:
+                                for article in news_articles:
+                                    st.markdown(f"**{article['source']}** | {article['date']}")
+                                    st.markdown(f"[{article['title']}]({article['url']})")
+                                    st.markdown("---")
+                            else:
+                                st.info("No recent news found")
+                else:
+                    st.warning("⚠️ No stocks found with bullish signals")
     
     # ==================== PORTFOLIO MANAGER ====================
     elif page == "💼 Portfolio Manager":
