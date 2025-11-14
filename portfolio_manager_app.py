@@ -1003,6 +1003,9 @@ def main():
         
     # GitHub Configuration
     with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
+        github_owner = st.text_input("GitHub Username")
+        github_repo = st.text_input("Repository Name")
+        github_token = st.text_input("Access Token", type="password")
         
         if db.github.configured:
             # Connected - show status and actions
