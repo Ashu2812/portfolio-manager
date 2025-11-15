@@ -576,36 +576,55 @@ class PortfolioDatabase:
             ''', (symbol.upper(), company_name, quantity, price, invested))
     
     def _reduce_from_holdings(self, cursor, symbol: str, quantity: float,
-                             sell_price: float) -> Tuple:
-        cursor.execute('SELECT * FROM holdings WHERE symbol = ?', (symbol.upper(),))
-        holding = cursor.fetchone()
-        
-        if not holding:
-            raise ValueError(f"No holding found for {symbol}")
-        
-        current_qty = holding[3]
-        avg_price = holding[4]
-        
-        if quantity > current_qty:
-            raise ValueError(f"Cannot sell {quantity} shares. Only {current_qty} available")
-        
-        profit_loss = (sell_price - avg_price) * quantity
-        profit_loss_pct = ((sell_price - avg_price) / avg_price) * 100
-        
-        new_qty = current_qty - quantity
-        
-        if new_qty <= 0:
-            cursor.execute('DELETE FROM holdings WHERE symbol = ?', (symbol.upper(),))
-        else:
-            new_invested = new_qty * avg_price
-            cursor.execute('''
-                UPDATE holdings
-                SET quantity = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE symbol = ?
-            ''', (new_qty, new_invested, symbol.upper()))
-        
-        return (symbol.upper(), holding[2], quantity, avg_price, sell_price,
-                profit_loss, profit_loss_pct)
+                                 sell_price: float) -> Tuple:
+            cursor.execute('SELECT * FROM holdings WHERE symbol = ?', (symbol.upper(),))
+            holding = cursor.fetchone()
+            
+            # If no holding exists, create SHORT position (negative quantity)
+            if not holding:
+                st.info(f"📉 Opening SHORT position for {symbol.upper()}")
+                # Create new holding with NEGATIVE quantity
+                new_qty = -quantity
+                invested = new_qty * sell_price
+                cursor.execute('''
+                    INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (symbol.upper(), symbol, new_qty, sell_price, invested))
+                
+                # No realized P&L when opening short position
+                return (symbol.upper(), symbol, quantity, sell_price, sell_price, 0, 0)
+            
+            current_qty = holding[3]
+            avg_price = holding[4]
+            company_name = holding[2]
+            
+            # Calculate P&L based on position type
+            if current_qty > 0:
+                # LONG position - profit when price goes UP
+                profit_loss = (sell_price - avg_price) * quantity
+                profit_loss_pct = ((sell_price - avg_price) / avg_price) * 100
+            else:
+                # SHORT position - profit when price goes DOWN
+                profit_loss = (avg_price - sell_price) * quantity
+                profit_loss_pct = ((avg_price - sell_price) / avg_price) * 100
+            
+            new_qty = current_qty - quantity
+            
+            # Update or delete holding
+            if new_qty == 0:
+                # Position fully closed
+                cursor.execute('DELETE FROM holdings WHERE symbol = ?', (symbol.upper(),))
+            else:
+                # Position still open (may be negative for short)
+                new_invested = new_qty * avg_price
+                cursor.execute('''
+                    UPDATE holdings
+                    SET quantity = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE symbol = ?
+                ''', (new_qty, new_invested, symbol.upper()))
+            
+            return (symbol.upper(), company_name, quantity, avg_price, sell_price,
+                    profit_loss, profit_loss_pct)
     
     def delete_holding(self, holding_id: int):
         """Delete a holding entirely"""
@@ -1081,7 +1100,34 @@ def main():
                 st.error("⚠️ Please enter both token and repository name")
         
         st.caption("💡 Token is saved locally and persists forever")
+        st.sidebar.divider()
+    
+    with st.sidebar.expander("🗑️ Database Management", expanded=False):
+        st.warning("⚠️ **Reset Database**")
+        st.caption("Use this to fix database schema errors. This will delete the local database file and recreate it.")
+        
+        if st.button("🔄 Reset Database Schema", type="primary"):
+            import os
+            try:
+                # Close any connections
+                if 'db' in st.session_state:
+                    del st.session_state.db
                 
+                # Delete database file
+                if os.path.exists("trading_system.db"):
+                    os.remove("trading_system.db")
+                    st.success("✅ Database reset! Reloading app...")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.info("No database file found")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    page = st.sidebar.radio(
+        "Navigation",
+        ["📈 Stock Scanner", ...]
+    )            
     page = st.sidebar.radio(
         "Navigation",
         ["📈 Stock Scanner", "💼 Portfolio Manager", "➕ Add Transaction",
@@ -1340,9 +1386,19 @@ def main():
                 try:
                     ticker = yf.Ticker(f"{row['symbol']}.NS")
                     current_price = ticker.history(period='1d')['Close'].iloc[-1]
-                    current_value = current_price * row['quantity']
-                    unrealised_pnl = current_value - row['invested_amount']
-                    unrealised_pnl_pct = (unrealised_pnl / row['invested_amount']) * 100
+                    
+                    # Handle both LONG and SHORT positions
+                    if row['quantity'] > 0:
+                        # LONG position - normal calculation
+                        current_value = current_price * row['quantity']
+                        unrealised_pnl = current_value - row['invested_amount']
+                    else:
+                        # SHORT position - reversed calculation
+                        # Profit when price drops, loss when price rises
+                        current_value = current_price * row['quantity']  # Will be negative
+                        unrealised_pnl = row['invested_amount'] - current_value  # Reversed
+                    
+                    unrealised_pnl_pct = (unrealised_pnl / abs(row['invested_amount'])) * 100
                     
                     total_invested += row['invested_amount']
                     total_current_value += current_value
@@ -1445,8 +1501,12 @@ def main():
                                 pnl_pct = (pnl / row['invested_amount'] * 100)
                                 
                                 with st.container():
-                                    st.markdown(f"### {row['symbol']}")
+                                    # Show SHORT indicator if negative quantity
+                                    position_type = "📉 SHORT" if row['quantity'] < 0 else "📈 LONG"
+                                    st.markdown(f"### {row['symbol']} {position_type}")
                                     st.caption(f"{row['company_name'][:25]}")
+                                    
+                                    qty_display = abs(row['quantity'])  # Show absolute value
                                     
                                     st.write(f"**Qty:** {row['quantity']:.0f} | **Avg:** ₹{row['avg_price']:.2f}")
                                     st.write(f"**CMP:** ₹{current_price:.2f}")
