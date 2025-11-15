@@ -115,6 +115,10 @@ class GitHubStorageManager:
     
     def __init__(self):
         self.api_base = "https://api.github.com"
+        self.token = None
+        self.owner = None
+        self.repo = None
+        self.repo_name = None
         self.configured = False
         self.load_config()
     
