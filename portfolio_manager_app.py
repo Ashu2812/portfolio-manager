@@ -1051,24 +1051,24 @@ def main():
                 help="Generate at: github.com/settings/tokens"
             )
                         
-                if st.button("💾 Connect & Save", type="primary"):
-                    if github_token and github_repo:
-                        # Save token to file
-                        if save_token(github_token, github_repo):
-                            # Parse repo into owner and name
-                            if '/' in github_repo:
-                                owner, repo = github_repo.split('/', 1)
-                                db.github.owner = owner
-                                db.github.repo = repo
-                                db.github.repo_name = github_repo
-                            else:
-                                st.error("⚠️ Repo format must be: username/repo-name")
-                                st.stop()
-                            
-                            db.github.token = github_token
-                            db.github.configured = True
-                else:
-                    st.error("⚠️ Please enter both token and repository name")
+            if st.button("💾 Connect & Save", type="primary"):
+                if github_token and github_repo:
+                    # Save token to file
+                    if save_token(github_token, github_repo):
+                        # Parse repo into owner and name
+                        if '/' in github_repo:
+                            owner, repo = github_repo.split('/', 1)
+                            db.github.owner = owner
+                            db.github.repo = repo
+                            db.github.repo_name = github_repo
+                        else:
+                            st.error("⚠️ Repo format must be: username/repo-name")
+                            st.stop()
+                        
+                        db.github.token = github_token
+                        db.github.configured = True
+            else:
+                st.error("⚠️ Please enter both token and repository name")
         
         st.caption("💡 Token is saved locally and persists forever")
                 
