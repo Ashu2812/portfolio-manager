@@ -63,7 +63,7 @@ def delete_token():
         return False
 # Page config
 st.set_page_config(
-    page_title="Trading System v2.3",
+    page_title="Stock Scanner & Portfolio Manager",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1681,6 +1681,7 @@ def main():
     - Strategy: 9/21 SMA ✅
     - News Integration ✅
     - Volume Analysis ✅
+    - Portfolio Manager ✅
     """)
     st.sidebar.caption("Stock Scanner - By Ashish Gupta")
 
