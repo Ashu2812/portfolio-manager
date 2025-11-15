@@ -394,56 +394,61 @@ class PortfolioDatabase:
         
         if self.github.configured:
             self.sync_from_github()
+   def init_database(self):
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
     
-    def init_database(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS holdings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                company_name TEXT NOT NULL,
-                quantity REAL NOT NULL,
-                avg_price REAL NOT NULL,
-                invested_amount REAL NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                company_name TEXT NOT NULL,
-                transaction_type TEXT NOT NULL,
-                quantity REAL NOT NULL,
-                price REAL NOT NULL,
-                total_amount REAL NOT NULL,
-                transaction_date DATE NOT NULL,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS realized_pnl (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                company_name TEXT NOT NULL,
-                quantity REAL NOT NULL,
-                buy_price REAL NOT NULL,
-                sell_price REAL NOT NULL,
-                profit_loss REAL NOT NULL,
-                profit_loss_pct REAL NOT NULL,
-                transaction_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS holdings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            avg_price REAL NOT NULL,
+            invested_amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            transaction_type TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL NOT NULL,
+            total_amount REAL NOT NULL,
+            transaction_date DATE NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS realized_pnl (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            buy_price REAL NOT NULL,
+            sell_price REAL NOT NULL,
+            profit_loss REAL NOT NULL,
+            profit_loss_pct REAL NOT NULL,
+            transaction_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Migration: Add transaction_id column to existing databases
+    cursor.execute("PRAGMA table_info(realized_pnl)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'transaction_id' not in columns:
+        cursor.execute('ALTER TABLE realized_pnl ADD COLUMN transaction_id INTEGER')
+    
+    conn.commit()
+    conn.close() 
     
     def sync_to_github(self):
         """Sync portfolio data to GitHub"""
