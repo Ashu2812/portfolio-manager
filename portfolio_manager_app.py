@@ -1001,7 +1001,7 @@ def main():
             st.session_state.stock_list = [line.strip() for line in content.split('\n') if line.strip()]
     
     # Sidebar
-    st.sidebar.title("📊 Trading System v2.3")
+    st.sidebar.title("📊 Stock Scanner & Portfolio Manager")
     
     # GitHub Configuration
     #with st.sidebar.expander("☁️ GitHub Storage", expanded=False):
