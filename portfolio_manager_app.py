@@ -533,23 +533,23 @@ class PortfolioDatabase:
         transaction_id = cursor.lastrowid
         
         if trans_type.upper() == 'BUY':
-            self._add_to_holdings(cursor, symbol, company_name, quantity, price)
-        elif trans_type.upper() == 'SELL':
-            realized_pnl = self._reduce_from_holdings(cursor, symbol, quantity, price)
+            realized_pnl = self._add_to_holdings(cursor, symbol, company_name, quantity, price)
+            # Record realized P&L if buying to cover a short position
             if realized_pnl:
                 cursor.execute('''
                     INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
                                              sell_price, profit_loss, profit_loss_pct, transaction_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', realized_pnl + (transaction_id,))
-        
-        conn.commit()
-        conn.close()
-        
-        if self.github.configured:
-            self.sync_to_github()
-        
-        return transaction_id
+        elif trans_type.upper() == 'SELL':
+            realized_pnl = self._reduce_from_holdings(cursor, symbol, quantity, price)
+            # Record realized P&L if closing a long position
+            if realized_pnl:
+                cursor.execute('''
+                    INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
+                                             sell_price, profit_loss, profit_loss_pct, transaction_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', realized_pnl + (transaction_id,))
     
     def _add_to_holdings(self, cursor, symbol: str, company_name: str,
                         quantity: float, price: float):
@@ -559,21 +559,63 @@ class PortfolioDatabase:
         if holding:
             old_qty = holding[3]
             old_avg = holding[4]
-            new_qty = old_qty + quantity
-            new_avg = ((old_qty * old_avg) + (quantity * price)) / new_qty
-            new_invested = new_qty * new_avg
             
-            cursor.execute('''
-                UPDATE holdings
-                SET quantity = ?, avg_price = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE symbol = ?
-            ''', (new_qty, new_avg, new_invested, symbol.upper()))
+            # Check if covering a SHORT position
+            if old_qty < 0:
+                # Covering short position - calculate P&L
+                cover_qty = min(quantity, abs(old_qty))  # How many shares we're covering
+                profit_loss = (old_avg - price) * cover_qty  # Profit when price drops
+                profit_loss_pct = ((old_avg - price) / old_avg) * 100 if old_avg != 0 else 0
+                
+                new_qty = old_qty + quantity
+                
+                if new_qty == 0:
+                    # Fully covered short
+                    cursor.execute('DELETE FROM holdings WHERE symbol = ?', (symbol.upper(),))
+                elif new_qty < 0:
+                    # Still short, but reduced
+                    new_invested = new_qty * old_avg
+                    cursor.execute('''
+                        UPDATE holdings
+                        SET quantity = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE symbol = ?
+                    ''', (new_qty, new_invested, symbol.upper()))
+                else:
+                    # Covered short and now LONG
+                    remaining_qty = new_qty
+                    new_avg = price
+                    new_invested = remaining_qty * new_avg
+                    cursor.execute('''
+                        UPDATE holdings
+                        SET quantity = ?, avg_price = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE symbol = ?
+                    ''', (new_qty, new_avg, new_invested, symbol.upper()))
+                
+                # Return realized P&L (sell_price is the short open price, buy_price is cover price)
+                return (symbol.upper(), holding[2], cover_qty, price, old_avg, profit_loss, profit_loss_pct)
+            
+            else:
+                # Adding to LONG position - normal calculation
+                new_qty = old_qty + quantity
+                new_avg = ((old_qty * old_avg) + (quantity * price)) / new_qty
+                new_invested = new_qty * new_avg
+                
+                cursor.execute('''
+                    UPDATE holdings
+                    SET quantity = ?, avg_price = ?, invested_amount = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE symbol = ?
+                ''', (new_qty, new_avg, new_invested, symbol.upper()))
+                
+                return None  # No realized P&L
         else:
+            # New LONG position
             invested = quantity * price
             cursor.execute('''
                 INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
                 VALUES (?, ?, ?, ?, ?)
             ''', (symbol.upper(), company_name, quantity, price, invested))
+            
+            return None  # No realized P&L
     
     def _reduce_from_holdings(self, cursor, symbol: str, quantity: float,
                                  sell_price: float) -> Tuple:
@@ -591,8 +633,8 @@ class PortfolioDatabase:
                     VALUES (?, ?, ?, ?, ?)
                 ''', (symbol.upper(), symbol, new_qty, sell_price, invested))
                 
-                # No realized P&L when opening short position
-                return (symbol.upper(), symbol, quantity, sell_price, sell_price, 0, 0)
+                # Return None - no realized P&L when opening short
+                return None
             
             current_qty = holding[3]
             avg_price = holding[4]
