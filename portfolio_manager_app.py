@@ -966,11 +966,15 @@ def main():
     # Auto-load saved GitHub token (NEW CODE)
     if 'token_loaded' not in st.session_state:
         saved_token, saved_repo = load_token()
-        if saved_token:
-            # Set attributes directly
-            db.github.token = saved_token
-            db.github.repo_name = saved_repo
-            db.github.configured = True
+        if saved_token and saved_repo:
+            # Parse repo into owner and name
+            if '/' in saved_repo:
+                owner, repo = saved_repo.split('/', 1)
+                db.github.owner = owner
+                db.github.repo = repo
+                db.github.repo_name = saved_repo
+                db.github.token = saved_token
+                db.github.configured = True
         st.session_state.token_loaded = True
         
     # Initialize news aggregator with NewsAPI
@@ -1046,21 +1050,23 @@ def main():
                 type="password",
                 help="Generate at: github.com/settings/tokens"
             )
-            
-            if st.button("💾 Connect & Save", type="primary"):
-                if github_token and github_repo:
-                    # Save token to file
-                    if save_token(github_token, github_repo):
-                        # Set attributes directly (no methods)
-                        db.github.token = github_token
-                        db.github.repo_name = github_repo
-                        db.github.configured = True
-                        st.success("✅ Connected & Token Saved!")
-                        st.info("💡 Token will persist forever!")
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error("❌ Failed to save token")
+                        
+                if st.button("💾 Connect & Save", type="primary"):
+                    if github_token and github_repo:
+                        # Save token to file
+                        if save_token(github_token, github_repo):
+                            # Parse repo into owner and name
+                            if '/' in github_repo:
+                                owner, repo = github_repo.split('/', 1)
+                                db.github.owner = owner
+                                db.github.repo = repo
+                                db.github.repo_name = github_repo
+                            else:
+                                st.error("⚠️ Repo format must be: username/repo-name")
+                                st.stop()
+                            
+                            db.github.token = github_token
+                            db.github.configured = True
                 else:
                     st.error("⚠️ Please enter both token and repository name")
         
