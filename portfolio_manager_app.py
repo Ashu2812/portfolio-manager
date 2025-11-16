@@ -1450,7 +1450,7 @@ def main():
                     
                     unrealised_pnl_pct = (unrealised_pnl / abs(row['invested_amount'])) * 100
                     
-                    total_invested += row['invested_amount']
+                    total_invested += abs(row['invested_amount'])
                     total_current_value += current_value
                     
                     portfolio_data.append({
