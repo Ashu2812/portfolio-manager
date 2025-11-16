@@ -550,7 +550,14 @@ class PortfolioDatabase:
                                              sell_price, profit_loss, profit_loss_pct, transaction_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', realized_pnl + (transaction_id,))
-    
+        conn.commit()
+        conn.close()
+        
+        if self.github.configured:
+            self.sync_to_github()
+        
+        return transaction_id
+                           
     def _add_to_holdings(self, cursor, symbol: str, company_name: str,
                         quantity: float, price: float):
         cursor.execute('SELECT * FROM holdings WHERE symbol = ?', (symbol.upper(),))
