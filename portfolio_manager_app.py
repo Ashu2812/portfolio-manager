@@ -961,33 +961,51 @@ def load_transactions_from_file(file) -> pd.DataFrame:
             st.error("Unsupported file format")
             return pd.DataFrame()
         
-        # Map column names
-        col_map = {}
-        for col in df.columns:
-            col_lower = col.lower().strip()
-            if 'symbol' in col_lower or 'stock' in col_lower or 'ticker' in col_lower:
-                col_map[col] = 'Symbol'
-            elif 'company' in col_lower or 'name' in col_lower:
-                col_map[col] = 'Company'
-            elif 'quantity' in col_lower or 'qty' in col_lower or 'shares' in col_lower:
-                col_map[col] = 'Quantity'
-            elif 'price' in col_lower or 'rate' in col_lower:
-                col_map[col] = 'Price'
-            elif 'type' in col_lower or 'action' in col_lower or 'side' in col_lower:
-                col_map[col] = 'Type'
-            elif 'date' in col_lower:
-                col_map[col] = 'Date'
-            elif 'note' in col_lower or 'remark' in col_lower or 'comment' in col_lower:
-                col_map[col] = 'Notes'
+        # Check if columns are already in correct format
+        expected_cols = {'Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date'}
+        current_cols = set(df.columns)
         
-        df.rename(columns=col_map, inplace=True)
+        # If all expected columns exist, use as-is
+        if expected_cols.issubset(current_cols):
+            st.info("✅ Using standard column names")
+        else:
+            # Otherwise, try to map column names
+            col_map = {}
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                
+                # Skip if already correctly named
+                if col in ['Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date', 'Notes']:
+                    continue
+                
+                # Map variations to standard names
+                if 'symbol' in col_lower or 'stock' in col_lower or 'ticker' in col_lower:
+                    col_map[col] = 'Symbol'
+                elif 'company' in col_lower or 'name' in col_lower:
+                    col_map[col] = 'Company'
+                elif 'quantity' in col_lower or 'qty' in col_lower or 'shares' in col_lower:
+                    col_map[col] = 'Quantity'
+                elif 'price' in col_lower or 'rate' in col_lower:
+                    col_map[col] = 'Price'
+                elif 'type' in col_lower or 'action' in col_lower or 'side' in col_lower:
+                    col_map[col] = 'Type'
+                elif 'date' in col_lower:
+                    col_map[col] = 'Date'
+                elif 'note' in col_lower or 'remark' in col_lower or 'comment' in col_lower:
+                    col_map[col] = 'Notes'
+            
+            # Apply mapping only for columns that need it
+            if col_map:
+                df.rename(columns=col_map, inplace=True)
+                st.info(f"✅ Mapped columns: {list(col_map.keys())}")
         
         # Validate required columns
         required = ['Symbol', 'Quantity', 'Price', 'Type', 'Date']
         missing = [col for col in required if col not in df.columns]
         if missing:
-            st.error(f"Missing required columns: {', '.join(missing)}")
-            st.info("Required: Symbol, Quantity, Price, Type (BUY/SELL), Date")
+            st.error(f"❌ Missing required columns: {', '.join(missing)}")
+            st.info("**Required columns:** Symbol, Type, Quantity, Price, Date")
+            st.caption("**Optional:** Company, Notes")
             return pd.DataFrame()
         
         # Add Company if missing
@@ -999,16 +1017,31 @@ def load_transactions_from_file(file) -> pd.DataFrame:
             df['Notes'] = ''
         
         # Clean up Type column
-        df['Type'] = df['Type'].str.upper().str.strip()
+        df['Type'] = df['Type'].astype(str).str.upper().str.strip()
+        
+        # Validate Type values
+        invalid_types = df[~df['Type'].isin(['BUY', 'SELL'])]
+        if not invalid_types.empty:
+            st.warning(f"⚠️ Found {len(invalid_types)} rows with invalid Type (must be BUY or SELL)")
+            st.dataframe(invalid_types[['Symbol', 'Type']])
         
         # Convert Date to proper format
-        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        try:
+            df['Date'] = pd.to_datetime(df['Date']).dt.date
+        except Exception as e:
+            st.error(f"❌ Error parsing dates: {str(e)}")
+            st.info("Date format should be: YYYY-MM-DD (e.g., 2024-01-15)")
+            return pd.DataFrame()
         
-        return df[['Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date', 'Notes']]
+        # Return only the columns we need
+        return df[['Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date', 'Notes']].copy()
         
     except Exception as e:
         st.error(f"Error loading transactions: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return pd.DataFrame()
+        
 # ==================== STOCK ANALYZER - STRATEGY 100% INTACT ====================
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
