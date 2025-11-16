@@ -1,5 +1,5 @@
 """
-UNIFIED TRADING SYSTEM v2.3 - Cosmetic Updates Only
+UNIFIED TRADING SYSTEM v6 - Cosmetic Updates Only
 - Strategy 100% UNCHANGED: 9/21 SMA Crossover + Volume > 1.5x
 - News integration 100% INTACT
 - Added: Unrealised P&L display
@@ -1393,11 +1393,7 @@ def main():
                     st.info("No database file found")
             except Exception as e:
                 st.error(f"Error: {str(e)}")
-    
-    page = st.sidebar.radio(
-        "Navigation",
-        ["📈 Stock Scanner", ...]
-    )            
+          
     page = st.sidebar.radio(
         "Navigation",
         ["📈 Stock Scanner", "💼 Portfolio Manager", "➕ Add Transaction",
