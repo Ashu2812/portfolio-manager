@@ -1032,6 +1032,58 @@ def format_volume(volume: float) -> str:
     else:
         return f"{volume:.0f}"
 
+def detect_instrument_type(symbol: str) -> tuple:
+    """
+    Detect instrument type and return (type, yahoo_symbol)
+    Types: 'equity', 'nifty_future', 'commodity', 'index'
+    """
+    symbol_upper = symbol.upper()
+    
+    # GIFT Nifty / Nifty Futures
+    if 'NIFTY' in symbol_upper and ('FUT' in symbol_upper or 'GIFT' in symbol_upper):
+        return ('nifty_future', 'NIFTY50.NS')  # Use Nifty spot as proxy
+    
+    # Nifty Index (spot)
+    if symbol_upper == 'NIFTY' or symbol_upper == 'NIFTY50':
+        return ('index', '^NSEI')
+    
+    # Bank Nifty
+    if symbol_upper == 'BANKNIFTY' or symbol_upper == 'BANKNIFTY50':
+        return ('index', '^NSEBANK')
+    
+    # MCX Commodities
+    if any(commodity in symbol_upper for commodity in ['SILVER', 'GOLD', 'CRUDE', 'COPPER', 'ZINC']):
+        return ('commodity', symbol_upper)
+    
+    # Regular equity
+    return ('equity', f"{symbol_upper}.NS")
+
+def get_current_price(symbol: str) -> float:
+    """
+    Get current price for any instrument type
+    """
+    instrument_type, yahoo_symbol = detect_instrument_type(symbol)
+    
+    try:
+        if instrument_type in ['equity', 'index', 'nifty_future']:
+            # Use Yahoo Finance
+            ticker = yf.Ticker(yahoo_symbol)
+            hist = ticker.history(period='1d')
+            if not hist.empty:
+                return hist['Close'].iloc[-1]
+        
+        elif instrument_type == 'commodity':
+            # For commodities, return a placeholder
+            # You'll need to integrate with MCX API or manual entry
+            st.warning(f"⚠️ {symbol}: Commodity prices not auto-fetched. Using manual price.")
+            return 0.0
+        
+        return 0.0
+    
+    except Exception as e:
+        st.error(f"Error fetching price for {symbol}: {str(e)}")
+        return 0.0
+
 
 # ==================== MAIN APP ====================
 
@@ -1435,8 +1487,11 @@ def main():
             for _, row in holdings.iterrows():
                 try:
                     ticker = yf.Ticker(f"{row['symbol']}.NS")
-                    current_price = ticker.history(period='1d')['Close'].iloc[-1]
-                    
+                    #current_price = ticker.history(period='1d')['Close'].iloc[-1]
+                    current_price = get_current_price(row['symbol'])
+                    if current_price == 0:
+                        continue  # Skip if price fetch failed
+                        
                     # Handle both LONG and SHORT positions
                     if row['quantity'] > 0:
                         # LONG position - normal calculation
@@ -1546,7 +1601,11 @@ def main():
                         with col:
                             try:
                                 ticker = yf.Ticker(f"{row['symbol']}.NS")
-                                current_price = ticker.history(period='1d')['Close'].iloc[-1]
+                                #current_price = ticker.history(period='1d')['Close'].iloc[-1]
+                                current_price = get_current_price(row['symbol'])
+                                if current_price == 0:
+                                    st.warning(f"⚠️ Cannot fetch price for {row['symbol']}")
+                                    continue
                                 current_value = current_price * row['quantity']
                                 pnl = current_value - row['invested_amount']
                                 pnl_pct = (pnl / row['invested_amount'] * 100)
@@ -1597,12 +1656,14 @@ def main():
                 notes = st.text_area("Notes (optional)", "")
             
             if symbol:
-                stock_info = get_stock_info(symbol)
-                if stock_info['valid']:
-                    st.success(f"✅ {stock_info['name']} - Current: ₹{stock_info['current_price']:.2f}")
-                    company_name = stock_info['name']
+                instrument_type, yahoo_symbol = detect_instrument_type(symbol)
+                current_price = get_current_price(symbol)
+                
+                if current_price > 0:
+                    st.success(f"✅ {symbol} ({instrument_type.upper()}) - Current: ₹{current_price:.2f}")
+                    company_name = symbol
                 else:
-                    st.warning("⚠️ Could not fetch stock info. Using symbol as name.")
+                    st.info(f"ℹ️ {symbol} ({instrument_type.upper()}) - Manual price entry required")
                     company_name = symbol
             else:
                 company_name = ""
