@@ -635,7 +635,7 @@ class PortfolioDatabase:
                 # Create new holding with NEGATIVE quantity
                 new_qty = -quantity
                 #this is where I have changed to test
-                invested = new_qty * sell_price * (-1)
+                invested = new_qty * sell_price
                 cursor.execute('''
                     INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
                     VALUES (?, ?, ?, ?, ?)
@@ -1445,8 +1445,8 @@ def main():
                     else:
                         # SHORT position - reversed calculation
                         # Profit when price drops, loss when price rises
-                        current_value = current_price * row['quantity']  # Will be negative
-                        unrealised_pnl = row['invested_amount'] - current_value  # Reversed
+                        current_value = current_price * row['quantity'] * -1 # Will be negative
+                        unrealised_pnl = row['invested_amount'] - current_value # Reversed
                     
                     unrealised_pnl_pct = (unrealised_pnl / abs(row['invested_amount'])) * 100
                     
