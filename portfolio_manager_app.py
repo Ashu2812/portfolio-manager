@@ -1464,7 +1464,8 @@ def main():
                     pass
             
             if portfolio_data:
-                total_unrealised_pnl = total_current_value - total_invested
+                #total_unrealised_pnl = total_current_value - total_invested
+                total_unrealised_pnl = sum([p['pnl'] for p in portfolio_data])
                 total_unrealised_pnl_pct = (total_unrealised_pnl / total_invested * 100) if total_invested > 0 else 0
                 
                 st.markdown("""
