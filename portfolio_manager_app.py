@@ -634,7 +634,8 @@ class PortfolioDatabase:
                 st.info(f"📉 Opening SHORT position for {symbol.upper()}")
                 # Create new holding with NEGATIVE quantity
                 new_qty = -quantity
-                invested = new_qty * sell_price
+                #this is where I have changed to test
+                invested = new_qty * -sell_price
                 cursor.execute('''
                     INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
                     VALUES (?, ?, ?, ?, ?)
