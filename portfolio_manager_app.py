@@ -515,79 +515,7 @@ class PortfolioDatabase:
                 
         except Exception as e:
             return False
-    
-    def bulk_import_transactions(self, df: pd.DataFrame) -> Tuple[int, List[str]]:
-        """Bulk import transactions from dataframe"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
         
-        success_count = 0
-        errors = []
-        
-        # Sort by date to process in chronological order
-        df = df.sort_values('Date')
-        
-        for idx, row in df.iterrows():
-            try:
-                symbol = str(row.get('Symbol', '')).upper().strip()
-                company = str(row.get('Company', symbol))
-                trans_type = str(row.get('Type', 'BUY')).upper().strip()
-                quantity = float(row.get('Quantity', 0))
-                price = float(row.get('Price', 0))
-                trans_date = row.get('Date')
-                notes = str(row.get('Notes', ''))
-                
-                # Validate
-                if not symbol or quantity <= 0 or price <= 0:
-                    errors.append(f"Row {idx+1}: Invalid data")
-                    continue
-                
-                if trans_type not in ['BUY', 'SELL']:
-                    errors.append(f"Row {idx+1}: Type must be BUY or SELL, got '{trans_type}'")
-                    continue
-                
-                # Add transaction
-                total_amount = quantity * price
-                
-                cursor.execute('''
-                    INSERT INTO transactions (symbol, company_name, transaction_type,
-                                             quantity, price, total_amount, transaction_date, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (symbol, company, trans_type, quantity, price, total_amount, trans_date, notes))
-                
-                transaction_id = cursor.lastrowid
-                
-                # Update holdings
-                if trans_type == 'BUY':
-                    realized_pnl = self._add_to_holdings(cursor, symbol, company, quantity, price)
-                    if realized_pnl:
-                        cursor.execute('''
-                            INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
-                                                     sell_price, profit_loss, profit_loss_pct, transaction_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', realized_pnl + (transaction_id,))
-                elif trans_type == 'SELL':
-                    realized_pnl = self._reduce_from_holdings(cursor, symbol, quantity, price)
-                    if realized_pnl:
-                        cursor.execute('''
-                            INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
-                                                     sell_price, profit_loss, profit_loss_pct, transaction_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', realized_pnl + (transaction_id,))
-                
-                success_count += 1
-                
-            except Exception as e:
-                errors.append(f"Row {idx+1}: {str(e)}")
-        
-        conn.commit()
-        conn.close()
-        
-        if self.github.configured:
-            self.sync_to_github()
-        
-        return success_count, errors
-    
     def add_transaction(self, symbol: str, company_name: str, trans_type: str,
                        quantity: float, price: float, trans_date: date, notes: str = ''):
         conn = sqlite3.connect(self.db_path)
@@ -854,6 +782,77 @@ class PortfolioDatabase:
         
         return success_count, errors
 
+    def bulk_import_transactions(self, df: pd.DataFrame) -> Tuple[int, List[str]]:
+        """Bulk import transactions from dataframe"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        success_count = 0
+        errors = []
+        
+        # Sort by date to process in chronological order
+        df = df.sort_values('Date')
+        
+        for idx, row in df.iterrows():
+            try:
+                symbol = str(row.get('Symbol', '')).upper().strip()
+                company = str(row.get('Company', symbol))
+                trans_type = str(row.get('Type', 'BUY')).upper().strip()
+                quantity = float(row.get('Quantity', 0))
+                price = float(row.get('Price', 0))
+                trans_date = row.get('Date')
+                notes = str(row.get('Notes', ''))
+                
+                # Validate
+                if not symbol or quantity <= 0 or price <= 0:
+                    errors.append(f"Row {idx+1}: Invalid data - Symbol: {symbol}, Qty: {quantity}, Price: {price}")
+                    continue
+                
+                if trans_type not in ['BUY', 'SELL']:
+                    errors.append(f"Row {idx+1}: Type must be BUY or SELL, got '{trans_type}'")
+                    continue
+                
+                # Add transaction
+                total_amount = quantity * price
+                
+                cursor.execute('''
+                    INSERT INTO transactions (symbol, company_name, transaction_type,
+                                             quantity, price, total_amount, transaction_date, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (symbol, company, trans_type, quantity, price, total_amount, trans_date, notes))
+                
+                transaction_id = cursor.lastrowid
+                
+                # Update holdings
+                if trans_type == 'BUY':
+                    realized_pnl = self._add_to_holdings(cursor, symbol, company, quantity, price)
+                    if realized_pnl:
+                        cursor.execute('''
+                            INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
+                                                     sell_price, profit_loss, profit_loss_pct, transaction_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', realized_pnl + (transaction_id,))
+                elif trans_type == 'SELL':
+                    realized_pnl = self._reduce_from_holdings(cursor, symbol, quantity, price)
+                    if realized_pnl:
+                        cursor.execute('''
+                            INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
+                                                     sell_price, profit_loss, profit_loss_pct, transaction_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', realized_pnl + (transaction_id,))
+                
+                success_count += 1
+                
+            except Exception as e:
+                errors.append(f"Row {idx+1} ({symbol}): {str(e)}")
+        
+        conn.commit()
+        conn.close()
+        
+        if self.github.configured:
+            self.sync_to_github()
+        
+        return success_count, errors
 
 # ==================== EXCEL/CSV/TXT PROCESSORS ====================
 
