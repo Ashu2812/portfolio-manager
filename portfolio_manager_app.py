@@ -635,7 +635,7 @@ class PortfolioDatabase:
                 # Create new holding with NEGATIVE quantity
                 new_qty = -quantity
                 #this is where I have changed to test
-                invested = new_qty * -sell_price
+                invested = new_qty * sell_price * (-1)
                 cursor.execute('''
                     INSERT INTO holdings (symbol, company_name, quantity, avg_price, invested_amount)
                     VALUES (?, ?, ?, ?, ?)
