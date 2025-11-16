@@ -516,6 +516,78 @@ class PortfolioDatabase:
         except Exception as e:
             return False
     
+    def bulk_import_transactions(self, df: pd.DataFrame) -> Tuple[int, List[str]]:
+    """Bulk import transactions from dataframe"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    success_count = 0
+    errors = []
+    
+    # Sort by date to process in chronological order
+    df = df.sort_values('Date')
+    
+    for idx, row in df.iterrows():
+        try:
+            symbol = str(row.get('Symbol', '')).upper().strip()
+            company = str(row.get('Company', symbol))
+            trans_type = str(row.get('Type', 'BUY')).upper().strip()
+            quantity = float(row.get('Quantity', 0))
+            price = float(row.get('Price', 0))
+            trans_date = row.get('Date')
+            notes = str(row.get('Notes', ''))
+            
+            # Validate
+            if not symbol or quantity <= 0 or price <= 0:
+                errors.append(f"Row {idx+1}: Invalid data")
+                continue
+            
+            if trans_type not in ['BUY', 'SELL']:
+                errors.append(f"Row {idx+1}: Type must be BUY or SELL, got '{trans_type}'")
+                continue
+            
+            # Add transaction
+            total_amount = quantity * price
+            
+            cursor.execute('''
+                INSERT INTO transactions (symbol, company_name, transaction_type,
+                                         quantity, price, total_amount, transaction_date, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, company, trans_type, quantity, price, total_amount, trans_date, notes))
+            
+            transaction_id = cursor.lastrowid
+            
+            # Update holdings
+            if trans_type == 'BUY':
+                realized_pnl = self._add_to_holdings(cursor, symbol, company, quantity, price)
+                if realized_pnl:
+                    cursor.execute('''
+                        INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
+                                                 sell_price, profit_loss, profit_loss_pct, transaction_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', realized_pnl + (transaction_id,))
+            elif trans_type == 'SELL':
+                realized_pnl = self._reduce_from_holdings(cursor, symbol, quantity, price)
+                if realized_pnl:
+                    cursor.execute('''
+                        INSERT INTO realized_pnl (symbol, company_name, quantity, buy_price,
+                                                 sell_price, profit_loss, profit_loss_pct, transaction_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', realized_pnl + (transaction_id,))
+            
+            success_count += 1
+            
+        except Exception as e:
+            errors.append(f"Row {idx+1}: {str(e)}")
+    
+    conn.commit()
+    conn.close()
+    
+    if self.github.configured:
+        self.sync_to_github()
+    
+    return success_count, errors
+    
     def add_transaction(self, symbol: str, company_name: str, trans_type: str,
                        quantity: float, price: float, trans_date: date, notes: str = ''):
         conn = sqlite3.connect(self.db_path)
@@ -872,7 +944,71 @@ def load_portfolio_from_file(file) -> pd.DataFrame:
         st.error(f"Error loading portfolio: {str(e)}")
         return pd.DataFrame()
 
-
+def load_transactions_from_file(file) -> pd.DataFrame:
+    """Load transaction history from Excel, CSV, or TXT file"""
+    try:
+        filename = file.name.lower()
+        
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            df = pd.read_excel(file)
+        elif filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        elif filename.endswith('.txt'):
+            content = file.read().decode('utf-8')
+            from io import StringIO
+            df = pd.read_csv(StringIO(content))
+        else:
+            st.error("Unsupported file format")
+            return pd.DataFrame()
+        
+        # Map column names
+        col_map = {}
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if 'symbol' in col_lower or 'stock' in col_lower or 'ticker' in col_lower:
+                col_map[col] = 'Symbol'
+            elif 'company' in col_lower or 'name' in col_lower:
+                col_map[col] = 'Company'
+            elif 'quantity' in col_lower or 'qty' in col_lower or 'shares' in col_lower:
+                col_map[col] = 'Quantity'
+            elif 'price' in col_lower or 'rate' in col_lower:
+                col_map[col] = 'Price'
+            elif 'type' in col_lower or 'action' in col_lower or 'side' in col_lower:
+                col_map[col] = 'Type'
+            elif 'date' in col_lower:
+                col_map[col] = 'Date'
+            elif 'note' in col_lower or 'remark' in col_lower or 'comment' in col_lower:
+                col_map[col] = 'Notes'
+        
+        df.rename(columns=col_map, inplace=True)
+        
+        # Validate required columns
+        required = ['Symbol', 'Quantity', 'Price', 'Type', 'Date']
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+            st.error(f"Missing required columns: {', '.join(missing)}")
+            st.info("Required: Symbol, Quantity, Price, Type (BUY/SELL), Date")
+            return pd.DataFrame()
+        
+        # Add Company if missing
+        if 'Company' not in df.columns:
+            df['Company'] = df['Symbol']
+        
+        # Add Notes if missing
+        if 'Notes' not in df.columns:
+            df['Notes'] = ''
+        
+        # Clean up Type column
+        df['Type'] = df['Type'].str.upper().str.strip()
+        
+        # Convert Date to proper format
+        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        
+        return df[['Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date', 'Notes']]
+        
+    except Exception as e:
+        st.error(f"Error loading transactions: {str(e)}")
+        return pd.DataFrame()
 # ==================== STOCK ANALYZER - STRATEGY 100% INTACT ====================
 
 def analyze_stock(symbol: str, company_name: str) -> Dict:
@@ -1739,77 +1875,170 @@ def main():
         tab1, tab2 = st.tabs(["📊 Portfolio Import", "📋 Stock List"])
         
         with tab1:
-            st.subheader("Import Portfolio from Excel/CSV/TXT")
-            st.info("📋 Upload file with columns: Symbol, Company, Quantity, Avg Price")
+            st.subheader("Import Portfolio Data")
             
-            # Show export option
-            holdings = db.get_holdings()
-            if not holdings.empty:
-                st.markdown("#### 📥 Export Current Portfolio")
-                export_df = holdings[['symbol', 'company_name', 'quantity', 'avg_price', 'invested_amount']]
-                export_df.columns = ['Symbol', 'Company', 'Quantity', 'Avg Price', 'Invested Amount']
-                
-                # CSV export
-                csv_export = export_df.to_csv(index=False)
-                st.download_button(
-                    "📥 Download as CSV",
-                    csv_export,
-                    f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    "text/csv"
-                )
-                
-                # Excel export
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    export_df.to_excel(writer, index=False, sheet_name='Portfolio')
-                excel_data = output.getvalue()
-                
-                st.download_button(
-                    "📥 Download as Excel",
-                    excel_data,
-                    f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                st.divider()
-            
-            # Import
-            st.markdown("#### 📤 Import Portfolio")
-            portfolio_file = st.file_uploader(
-                "Upload Portfolio File",
-                type=['xlsx', 'xls', 'csv', 'txt'],
-                key='portfolio_file'
+            # Choose import type
+            import_type = st.radio(
+                "Import Type",
+                ["📊 Holdings Only (Current Portfolio)", "📜 Transaction History (Full Reconstruction)"],
+                horizontal=True
             )
             
-            if portfolio_file is not None:
-                try:
-                    preview_df = load_portfolio_from_file(portfolio_file)
-                    
-                    if not preview_df.empty:
-                        st.write("**Preview:**")
-                        st.dataframe(preview_df.head(), use_container_width=True)
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if st.button("✅ Import Portfolio", type="primary"):
-                                success_count, errors = db.bulk_import_portfolio(preview_df)
-                                
-                                if success_count > 0:
-                                    st.success(f"✅ Imported {success_count} holdings!")
-                                
-                                if errors:
-                                    st.warning(f"⚠️ {len(errors)} errors:")
-                                    for error in errors[:5]:
-                                        st.text(error)
-                                
-                                st.rerun()
-                        
-                        with col2:
-                            st.warning("⚠️ This will replace existing holdings!")
+            if import_type == "📊 Holdings Only (Current Portfolio)":
+                st.info("📋 Upload file with columns: **Symbol, Company, Quantity, Avg Price**")
+                st.caption("This will replace your current holdings with the uploaded data.")
                 
-                except Exception as e:
-                    st.error(f"Error reading file: {str(e)}")
+                # Show export option
+                holdings = db.get_holdings()
+                if not holdings.empty:
+                    st.markdown("#### 📥 Export Current Portfolio")
+                    export_df = holdings[['symbol', 'company_name', 'quantity', 'avg_price', 'invested_amount']]
+                    export_df.columns = ['Symbol', 'Company', 'Quantity', 'Avg Price', 'Invested Amount']
+                    
+                    # CSV export
+                    csv_export = export_df.to_csv(index=False)
+                    st.download_button(
+                        "📥 Download as CSV",
+                        csv_export,
+                        f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv"
+                    )
+                    
+                    # Excel export
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        export_df.to_excel(writer, index=False, sheet_name='Portfolio')
+                    excel_data = output.getvalue()
+                    
+                    st.download_button(
+                        "📥 Download as Excel",
+                        excel_data,
+                        f"portfolio_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    st.divider()
+                
+                # Import Holdings
+                st.markdown("#### 📤 Import Holdings")
+                portfolio_file = st.file_uploader(
+                    "Upload Portfolio File",
+                    type=['xlsx', 'xls', 'csv', 'txt'],
+                    key='portfolio_file'
+                )
+                
+                if portfolio_file is not None:
+                    try:
+                        preview_df = load_portfolio_from_file(portfolio_file)
+                        
+                        if not preview_df.empty:
+                            st.write("**Preview:**")
+                            st.dataframe(preview_df.head(), use_container_width=True)
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                if st.button("✅ Import Portfolio", type="primary"):
+                                    success_count, errors = db.bulk_import_portfolio(preview_df)
+                                    
+                                    if success_count > 0:
+                                        st.success(f"✅ Imported {success_count} holdings!")
+                                    
+                                    if errors:
+                                        st.warning(f"⚠️ {len(errors)} errors:")
+                                        for error in errors[:5]:
+                                            st.text(error)
+                                    
+                                    st.rerun()
+                            
+                            with col2:
+                                st.warning("⚠️ This will replace existing holdings!")
+                    
+                    except Exception as e:
+                        st.error(f"Error reading file: {str(e)}")
+            
+            else:  # Transaction History Import
+                st.info("📋 Upload file with columns: **Symbol, Company, Type (BUY/SELL), Quantity, Price, Date, Notes**")
+                st.caption("This will import all transactions and automatically build your portfolio.")
+                
+                # Show sample format
+                with st.expander("📋 View Sample Format"):
+                    sample_df = pd.DataFrame({
+                        'Symbol': ['RELIANCE', 'RELIANCE', 'TCS', 'TCS'],
+                        'Company': ['Reliance Industries', 'Reliance Industries', 'TCS Ltd', 'TCS Ltd'],
+                        'Type': ['BUY', 'SELL', 'BUY', 'BUY'],
+                        'Quantity': [100, 50, 200, 100],
+                        'Price': [2000.00, 2100.00, 3500.00, 3600.00],
+                        'Date': ['2024-01-15', '2024-02-20', '2024-01-10', '2024-03-01'],
+                        'Notes': ['Initial buy', 'Partial profit booking', 'Long term', 'Averaging']
+                    })
+                    st.dataframe(sample_df, use_container_width=True)
+                
+                # Export transactions
+                transactions = db.get_transactions(limit=1000)
+                if not transactions.empty:
+                    st.markdown("#### 📥 Export Transaction History")
+                    export_df = transactions[['symbol', 'company_name', 'transaction_type', 'quantity', 
+                                             'price', 'transaction_date', 'notes']]
+                    export_df.columns = ['Symbol', 'Company', 'Type', 'Quantity', 'Price', 'Date', 'Notes']
+                    
+                    csv_export = export_df.to_csv(index=False)
+                    st.download_button(
+                        "📥 Download Transactions as CSV",
+                        csv_export,
+                        f"transactions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv"
+                    )
+                    
+                    st.divider()
+                
+                # Import Transactions
+                st.markdown("#### 📤 Import Transactions")
+                transaction_file = st.file_uploader(
+                    "Upload Transaction File",
+                    type=['xlsx', 'xls', 'csv', 'txt'],
+                    key='transaction_file'
+                )
+                
+                if transaction_file is not None:
+                    try:
+                        preview_df = load_transactions_from_file(transaction_file)
+                        
+                        if not preview_df.empty:
+                            st.write("**Preview:**")
+                            st.dataframe(preview_df.head(10), use_container_width=True)
+                            st.caption(f"Total: {len(preview_df)} transactions")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                clear_existing = st.checkbox("Clear existing data before import", value=True)
+                            
+                            with col2:
+                                if st.button("✅ Import Transactions", type="primary"):
+                                    if clear_existing:
+                                        # Clear existing data
+                                        conn = sqlite3.connect("trading_system.db")
+                                        conn.execute("DELETE FROM holdings")
+                                        conn.execute("DELETE FROM transactions")
+                                        conn.execute("DELETE FROM realized_pnl")
+                                        conn.commit()
+                                        conn.close()
+                                    
+                                    success_count, errors = db.bulk_import_transactions(preview_df)
+                                    
+                                    if success_count > 0:
+                                        st.success(f"✅ Imported {success_count} transactions!")
+                                    
+                                    if errors:
+                                        st.warning(f"⚠️ {len(errors)} errors:")
+                                        for error in errors[:10]:
+                                            st.text(error)
+                                    
+                                    st.rerun()
+                    
+                    except Exception as e:
+                        st.error(f"Error reading file: {str(e)}")
         
         with tab2:
             st.subheader("Upload Stock List for Scanner")
