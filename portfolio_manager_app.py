@@ -1630,7 +1630,7 @@ def main():
             auto_refresh = st.checkbox("🔄 Auto-refresh", value=False)
         with col2:
             if auto_refresh:
-                refresh_interval = st.slider("Refresh interval (seconds)", 30, 300, 60)
+                refresh_interval = st.slider("Refresh interval (seconds)", 10, 300, 60)
         
         # Refresh button
         col_refresh, col_clear = st.columns([1, 4])
